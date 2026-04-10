@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    defaultPrim = "Peg"
+    metersPerUnit = 1.0
+    upAxis = "Z"
+)
+
+def Xform "Peg" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+)
+{
+    bool physics:rigidBodyEnabled = true
+    float physics:mass = 0.1
+
+    def Cylinder "Body" (
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]
+    )
+    {
+        double radius = 0.015
+        double height = 0.08
+        token axis = "Z"
+        double3 xformOp:translate = (0, 0, -0.04)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        bool physics:collisionEnabled = true
+        token physics:approximation = "convexHull"
+        color3f[] primvars:displayColor = [(0.2, 0.8, 0.2)]
+    }
+}

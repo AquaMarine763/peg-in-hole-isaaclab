@@ -43,3 +43,4 @@
 - 大规模改进：(1) 动作空间从 3D 扩展到 6D，pre-contact 旋转 mask 为 0 并由 6-DOF IK 维持 nominal 朝向，post-contact 放开旋转自由度 (±0.03 rad/step) 用于插入修正；(2) 相机从 (0.68,-0.12,0.38) 拉近到 (0.61,0.0,0.28)，hole 从 ~5px 提升到 ~8-9px；(3) reset 高度改为动态定位 (30-40mm)；(4) hard alignment gate (xy<3mm) 替换为 soft gate `exp(-xy²/(2σ²))` σ=5mm；(5) post-contact 新增 XY 进步奖励 (scale=80)；(6) force penalty 从 0.01 加大到 0.05；(7) 修复 multi-env 下 reset.py 的坐标系混用 bug (peg_tip_w 为世界坐标但与 local hole_top_pos 做差)。
 - 修正 reset 几何回归：在 `write_joint_state_to_sim()` 后显式调用 `robot.reset(env_ids)` 再读取 EE 姿态，避免沿用上个 episode 的 stale/titled EE pose；验证当前初始几何恢复为局部 handoff（xy≈9.6mm, zgap≈35.4mm），且 peg 初始轴线约为 `[0, 0, -1]`，与 hole 同轴竖直。
 - 改进可视化脚本的 reset 预览：`inspect_scene.py` 在每次 reset 后先执行若干次 render/update warm-up 再打印与展示；`play.py` 在首次 reset 和每次 episode 自动 reset 后先展示 reset preview，再进入动作 rollout，避免窗口第一眼看到的是 step 后或 stale 的帧。
+- 为拆分独立仓库做发布准备：将 README 改为面向独立 Isaac Lab 仓库的标题与首页介绍，准备创建公开仓库 `peg-in-hole-isaaclab`。

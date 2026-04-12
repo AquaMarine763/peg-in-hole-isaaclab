@@ -44,3 +44,20 @@
 - 修正 reset 几何回归：在 `write_joint_state_to_sim()` 后显式调用 `robot.reset(env_ids)` 再读取 EE 姿态，避免沿用上个 episode 的 stale/titled EE pose；验证当前初始几何恢复为局部 handoff（xy≈9.6mm, zgap≈35.4mm），且 peg 初始轴线约为 `[0, 0, -1]`，与 hole 同轴竖直。
 - 改进可视化脚本的 reset 预览：`inspect_scene.py` 在每次 reset 后先执行若干次 render/update warm-up 再打印与展示；`play.py` 在首次 reset 和每次 episode 自动 reset 后先展示 reset preview，再进入动作 rollout，避免窗口第一眼看到的是 step 后或 stale 的帧。
 - 为拆分独立仓库做发布准备：将 README 改为面向独立 Isaac Lab 仓库的标题与首页介绍，准备创建公开仓库 `peg-in-hole-isaaclab`。
+- 任务定义升级为“受限工作区视觉搜索 + 插入”：robot ready pose 固定、peg 初始保持竖直，hole 改为在固定 workspace `(0.92, 0.17) ± (0.04, 0.04)` 内独立随机，并增加 `initial_xy_dist <= 0.06m` 约束，打破 peg/hole 强绑定但仍保持局部任务。
+- reward 重构为更偏视觉搜索的 pre-contact 设计：提高 XY progress 权重，新增 gated Z progress（σ=15mm），并加入 misaligned downward penalty，鼓励“先找孔、再下压”而不是盲目撞击 block；同时把 AGENTS.md 扩写为完整记录工作区、参数、reward 和工作流程的知识库。
+- 将当前关键几何尺寸系统写入 `AGENTS.md`：包括 peg、hole / block、安装偏移、fixed ready pose 下的 peg tip 位置、hole 顶面高度、相机与 workspace 参数，后续这些尺寸有变动时应同步更新。
+- 将 fixed ready pose 抬高到接近 25 cm 初始高度：robot 初始关节角改为 `[0.0, -1.55, 1.95, -1.97, -1.5708, 0.0]`，实测 peg tip 约为 `(0.659, 0.174, 0.384)`，初始 `z_gap ≈ 0.244 m`；同时把 hole workspace 中心同步改到 `(0.66, 0.17)` 以匹配新的 ready pose。
+- 为相机调试补充 inspect 工具：`inspect_scene.py` 新增 `--save_reset_depth`（默认保存到 `debug_outputs/reset_depth/<时间戳>/`，包含 `.png/.pt/.json`）和 `--lock_viewport_to_task_camera`（把 GUI 视角切到 `/World/envs/env_0/Camera`），方便直接检查任务相机看到的内容以及 peg 对 hole 的遮挡情况，同时避免主目录堆满调试文件。
+- 新增任务相机可见标记：通过 `--show_camera_marker` 在 `inspect_scene.py` 和 `play.py` 中显示任务相机的位置与朝向标记，便于在普通 viewport 下确认相机实体位置和观察方向。
+- 放大任务相机标记并增加前向箭头，方便在 demo 中更清楚地辨认相机的实际位置与观察方向；当前更推荐用 `play.py --show_camera_marker` 来确认 demo 真正使用的任务相机 pose。
+- 将任务相机标记改为 IsaacLab 官方 `VisualizationMarkers / FRAME_MARKER_CFG`（外加球形原点 marker），避免之前手写 USD marker 在 demo 中不稳定/不可见的问题；同时将 reset depth PNG 改为默认按 `0.15m ~ 0.50m` 的工作区深度范围做高对比可视化，保留 `.pt` 原始 tensor 供策略/数值分析使用。
+- 放弃抽象 marker，改成更直观的实体相机代理：用一个可见机身盒子加镜头圆柱表示任务相机的位置和朝向；同时把相机从 `(0.61, 0.0, 0.28)` 拉远到 `(0.58, 0.05, 0.40)`，并将深度图分辨率从 `48×48` 提高到 `64×64`，以减少近距离遮挡风险并补偿像素占比。
+- 将深度图分辨率进一步从 `64×64` 提高到 `84×84`，在相机拉远后的前提下进一步提升孔口与 peg 的可见像素占比，方便视觉搜索阶段学习更细的局部几何线索。
+- 撤掉 `play.py / inspect_scene.py` 里不稳定的临时相机代理注入逻辑，改为在 `env/core.py` 的 scene setup 中生成稳定的纯视觉相机代理（机身盒子 + 镜头圆柱）。这样 demo / inspect 共享同一个环境级相机代理，不参与物理和碰撞，也避免脚本级临时 prim 注入带来的 GUI 回归。
+- 将相机继续拉远并重新对准 workspace 中心：从 `(0.58, 0.05, 0.40)` 调整到 `(0.50, -0.07, 0.66)`，并用 look-at 方式重新计算四元数 `(0.926571, 0.239775, -0.072598, -0.280543)`，确保相机显式朝向 hole 初始化区域中心 `(0.66, 0.17, 0.14)`。
+- 继续把 reward 往“先找孔再下压”方向推进：pre-contact 的 3D distance progress 改为也受 `pre_align_gate` 调制，`precontact_distance_progress_scale` 从 `5.0` 降到 `1.0`，`precontact_xy_progress_scale` 从 `120` 提高到 `160`，`misaligned_downward_penalty_scale` 从 `2.0` 提高到 `6.0`，并把 pre-contact Z 动作阈值从 `2.0mm` 收紧到 `1.2mm`，减少策略早期直接向下冲的诱因。
+- 训练架构继续改进为 asymmetric actor-critic + privileged critic：保持 actor 输入不变（`policy + depth`），只给 critic 额外加入 `hole_xy` 特权真值，用来改善 pre-contact 视觉搜索阶段的 value estimation；相比让 critic 也看 depth，这个改法更轻量，也更符合当前 GPU/显存约束。
+- 继续强化“先找孔再下压”：将 pre-contact Z 动作阈值从 `1.2mm` 进一步收紧到 `0.8mm`，同时把 phase 切换改为更保守的 `force_norm > 8N` 且持续 `5` 步，减少“先碰到 block 就切 phase”的捷径；pre-contact 的 `distance_progress_scale` 再降到 `0.25`，`z_progress_scale` 再降到 `25`，`misaligned_downward_penalty_scale` 再升到 `10`，进一步压制早期下冲局部最优。
+- 继续把“先找孔再下压”做成更硬约束：把 misaligned downward 判定阈值从 `20mm` 收紧到 `15mm`，并新增 `misaligned_downward_progress_penalty`，当 `xy_dist > 15mm` 且 peg 真实发生 downward progress 时直接处罚实际向下位移，让“没对准就继续往下压”在 reward 上更明确地变成净负收益。
+- 当前 phase 切换再加一层 XY 保护：只有 `force_norm > 8N` 且 `xy_dist < 20mm` 并持续 `5` 步，才允许进入 post-contact，避免策略靠“偏着撞到 block”直接切到接触后阶段。

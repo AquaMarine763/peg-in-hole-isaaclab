@@ -50,6 +50,44 @@ python play.py --model logs/local_insert/model_500.pt --num_envs 1
 python inspect_scene.py
 ```
 
+保存 reset 时的 depth 图（会输出 `.png`、`.pt`、`.json` 到 `debug_outputs/reset_depth/<时间戳>/`）：
+
+```bash
+python inspect_scene.py --save_reset_depth
+```
+
+如果你想让保存出来的 depth 图更适合人眼看工作区层次（默认可视化范围就是 `0.15m ~ 0.50m`）：
+
+```bash
+python inspect_scene.py --save_reset_depth --depth_viz_near 0.15 --depth_viz_far 0.50
+```
+
+如果你想让窗口直接切到任务相机视角：
+
+```bash
+python inspect_scene.py --lock_viewport_to_task_camera
+```
+
+如果你想在普通视角里看到任务相机的位置和朝向代理（机身盒子 + 镜头圆柱）：
+
+```bash
+python inspect_scene.py --show_camera_marker
+```
+
+两者一起用：
+
+```bash
+python inspect_scene.py --save_reset_depth --lock_viewport_to_task_camera
+```
+
+在 demo 里显示任务相机标记：
+
+```bash
+python play.py --model logs/local_insert/model_500.pt --show_camera_marker
+```
+
+如果你主要想确认任务相机的**实际位置和朝向**，建议优先在 `play.py` 里看这个代理，因为它是通过环境 scene setup 用 demo 自己的 camera 配置生成的稳定纯视觉物体。
+
 每 5 秒自动 reset：
 
 ```bash

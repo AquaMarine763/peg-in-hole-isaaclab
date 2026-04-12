@@ -42,31 +42,38 @@ class HoleCfg:
 class TaskCfg:
     peg: PegCfg = PegCfg()
     hole: HoleCfg = HoleCfg()
-    robot_init_joint_pos: list = [0.0, -1.1, 1.5, -1.97, -1.5708, 0.0]
+    robot_init_joint_pos: list = [0.0, -1.55, 1.95, -1.97, -1.5708, 0.0]
+    hole_workspace_xy_center: list = [0.66, 0.17]
+    hole_workspace_xy_half_range: list = [0.04, 0.04]
+    max_initial_xy_dist: float = 0.06
     success_xy_tolerance: float = 0.002
     success_depth_fraction: float = 0.8
     too_far_xy_threshold: float = 0.08
     soft_gate_sigma: float = 0.005
-    contact_force_threshold: float = 5.0
-    contact_persistence_steps: int = 3
-    precontact_distance_progress_scale: float = 10.0
-    precontact_xy_progress_scale: float = 80.0
+    contact_force_threshold: float = 8.0
+    contact_persistence_steps: int = 5
+    phase_switch_xy_threshold: float = 0.02
+    precontact_distance_progress_scale: float = 0.25
+    precontact_xy_progress_scale: float = 160.0
+    precontact_z_progress_scale: float = 25.0
+    precontact_z_gate_sigma: float = 0.015
     precontact_xy_penalty_scale: float = 15.0
+    precontact_misaligned_downward_xy_threshold: float = 0.015
+    precontact_misaligned_downward_penalty_scale: float = 10.0
+    precontact_misaligned_downward_progress_penalty_scale: float = 80.0
     postcontact_xy_progress_scale: float = 80.0
     postcontact_distance_progress_scale: float = 20.0
     postcontact_insertion_progress_scale: float = 320.0
     postcontact_force_penalty_scale: float = 0.05
     action_penalty_scale: float = 0.0015
     success_bonus: float = 100.0
-    reset_xy_offset_range: float = 0.008
-    reset_z_above_hole: list = [0.030, 0.040]
     peg_mount_offset: list = [0.0, 0.0, -0.01]
 
 
 @configclass
 class CtrlCfg:
     ema_factor: float = 0.05
-    precontact_pos_action_threshold: list = [0.0005, 0.0005, 0.0020]
+    precontact_pos_action_threshold: list = [0.0005, 0.0005, 0.0008]
     postcontact_pos_action_threshold: list = [0.0008, 0.0008, 0.0015]
     ik_damping: float = 0.05
     postcontact_rot_action_threshold: list = [0.03, 0.03, 0.03]
@@ -91,6 +98,7 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
     ctrl: CtrlCfg = CtrlCfg()
     force_sensor: ForceSensorCfg = ForceSensorCfg()
     camera_step_interval: int = 1
+    show_camera_proxy: bool = False
 
     sim: SimulationCfg = SimulationCfg(
         device="cuda:0",
@@ -171,8 +179,8 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
     camera: TiledCameraCfg = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.61, 0.0, 0.28),
-            rot=(0.4745, -0.1900, 0.1057, 0.8530),
+            pos=(0.50, -0.07, 0.66),
+            rot=(0.926571, 0.239775, -0.072598, -0.280543),
             convention="world",
         ),
         spawn=sim_utils.PinholeCameraCfg(
@@ -180,8 +188,8 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
             horizontal_aperture=20.955,
             clipping_range=(0.1, 20.0),
         ),
-        width=48,
-        height=48,
+        width=84,
+        height=84,
         data_types=["depth"],
         update_period=0,
     )

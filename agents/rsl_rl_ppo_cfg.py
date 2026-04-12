@@ -10,7 +10,7 @@ class LocalInsertPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 100
     experiment_name = "local_insert_clean"
     empirical_normalization = False
-    obs_groups = {"actor": ["policy", "depth"], "critic": ["policy"]}
+    obs_groups = {"actor": ["policy", "depth"], "critic": ["policy", "hole_state"]}
     actor = RslRlCNNModelCfg(
         class_name="CNNModel",
         hidden_dims=[256, 128],

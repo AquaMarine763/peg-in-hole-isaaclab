@@ -46,7 +46,10 @@ def get_observations(env):
     phase = env.phase_flag.unsqueeze(-1)
     force_history_masked = env.force_history * phase.unsqueeze(-1)
     force_flat = force_history_masked.reshape(env.num_envs, -1)
-    obs = {"policy": torch.cat([proprio, phase, force_flat], dim=-1)}
+    obs = {
+        "policy": torch.cat([proprio, phase, force_flat], dim=-1),
+        "hole_state": env.hole_top_pos[:, :2],
+    }
 
     if hasattr(env, "_camera"):
         env._action_step_count += 1

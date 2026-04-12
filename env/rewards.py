@@ -13,9 +13,14 @@ def get_rewards(env):
     distance_progress = env.prev_tip_to_hole_dist - curr_dist_3d
     pre_mask = 1.0 - env.phase_flag
     post_mask = env.phase_flag
-    dist_reward = distance_progress * (pre_mask * env.cfg_task.precontact_distance_progress_scale + post_mask * env.cfg_task.postcontact_distance_progress_scale)
-    xy_reward = xy_progress * env.cfg_task.precontact_xy_progress_scale * pre_mask
     z_gap = env.peg_tip_pos[:, 2] - env.hole_top_pos[:, 2]
+    z_progress = env.prev_z_gap - z_gap
+
+    pre_align_gate = torch.exp(-peg_to_hole_xy**2 / (2 * env.cfg_task.precontact_z_gate_sigma**2))
+    precontact_dist_reward = distance_progress * env.cfg_task.precontact_distance_progress_scale * pre_align_gate * pre_mask
+    postcontact_dist_reward = distance_progress * env.cfg_task.postcontact_distance_progress_scale * post_mask
+    xy_reward = xy_progress * env.cfg_task.precontact_xy_progress_scale * pre_mask
+    precontact_z_reward = z_progress * env.cfg_task.precontact_z_progress_scale * pre_align_gate * pre_mask
 
     insertion_depth = torch.clamp(env.hole_top_pos[:, 2] - env.peg_tip_pos[:, 2], min=0.0)
     insertion_depth = torch.clamp(insertion_depth, max=env.cfg_task.hole.height)
@@ -28,8 +33,31 @@ def get_rewards(env):
     action_penalty = torch.norm(env.actions, p=2, dim=-1) * env.cfg_task.action_penalty_scale
     xy_penalty = peg_to_hole_xy * env.cfg_task.precontact_xy_penalty_scale * pre_mask
     postcontact_xy_reward = xy_progress * env.cfg_task.postcontact_xy_progress_scale * post_mask
+    downward_action = torch.clamp(-env.actions[:, 2], min=0.0)
+    misaligned_gate = (peg_to_hole_xy > env.cfg_task.precontact_misaligned_downward_xy_threshold).float()
+    misaligned_downward_penalty = downward_action * misaligned_gate * env.cfg_task.precontact_misaligned_downward_penalty_scale * pre_mask
+    downward_progress = torch.clamp(z_progress, min=0.0)
+    misaligned_downward_progress_penalty = (
+        downward_progress
+        * misaligned_gate
+        * env.cfg_task.precontact_misaligned_downward_progress_penalty_scale
+        * pre_mask
+    )
 
-    rewards = dist_reward + xy_reward + postcontact_xy_reward + insertion_reward - force_penalty - action_penalty - xy_penalty + curr_successes.float() * env.cfg_task.success_bonus
+    rewards = (
+        precontact_dist_reward
+        + postcontact_dist_reward
+        + xy_reward
+        + precontact_z_reward
+        + postcontact_xy_reward
+        + insertion_reward
+        - force_penalty
+        - action_penalty
+        - xy_penalty
+        - misaligned_downward_penalty
+        - misaligned_downward_progress_penalty
+        + curr_successes.float() * env.cfg_task.success_bonus
+    )
 
     env.prev_actions = env.actions.clone()
     env.prev_tip_to_hole_dist = curr_dist_3d.clone()
@@ -38,12 +66,17 @@ def get_rewards(env):
     env.prev_z_gap = z_gap.clone()
     env.ep_succeeded[curr_successes] = 1
     env.extras["log"] = {
-        "distance_progress_reward": dist_reward.mean(),
+        "precontact_distance_progress_reward": precontact_dist_reward.mean(),
         "precontact_xy_reward": xy_reward.mean(),
+        "precontact_z_reward": precontact_z_reward.mean(),
+        "pre_align_gate_mean": pre_align_gate.mean(),
         "postcontact_xy_reward": postcontact_xy_reward.mean(),
+        "postcontact_distance_progress_reward": postcontact_dist_reward.mean(),
         "insertion_reward": insertion_reward.mean(),
         "force_penalty": force_penalty.mean(),
         "xy_penalty": xy_penalty.mean(),
+        "misaligned_downward_penalty": misaligned_downward_penalty.mean(),
+        "misaligned_downward_progress_penalty": misaligned_downward_progress_penalty.mean(),
         "contact_force_mean": contact_force.mean(),
         "xy_dist_mean": peg_to_hole_xy.mean(),
         "z_gap_mean": z_gap.mean(),

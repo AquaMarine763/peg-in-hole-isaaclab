@@ -12,6 +12,7 @@ parser.add_argument("--num_envs", type=int, default=1)
 parser.add_argument("--num_episodes", type=int, default=5)
 parser.add_argument("--reset_preview_frames", type=int, default=3)
 parser.add_argument("--reset_preview_seconds", type=float, default=0.5)
+parser.add_argument("--show_camera_marker", action="store_true")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.enable_cameras = True
@@ -57,6 +58,7 @@ def main():
     env_cfg = LocalInsertEnvCfg()
     agent_cfg = LocalInsertPPORunnerCfg()
     env_cfg.scene.num_envs = args.num_envs
+    env_cfg.show_camera_proxy = args.show_camera_marker
 
     installed_version = metadata.version("rsl-rl-lib")
     agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)

@@ -12,7 +12,7 @@ from isaaclab.sensors import TiledCamera
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils.math import axis_angle_from_quat
 from omni.physx.scripts import physicsUtils
-from pxr import Gf
+from pxr import Gf, UsdGeom
 
 from .cfg import LocalInsertEnvCfg
 from .observations import compute_intermediate_values, get_observations
@@ -88,6 +88,9 @@ class LocalInsertEnv(DirectRLEnv):
             self._camera = TiledCamera(self.cfg.camera)
             self.scene.sensors["camera"] = self._camera
 
+        if getattr(self.cfg, "show_camera_proxy", False):
+            self._create_camera_proxy()
+
         self._create_peg_fixed_joint()
         self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["robot"] = self._robot
@@ -96,6 +99,42 @@ class LocalInsertEnv(DirectRLEnv):
 
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
+
+    def _create_camera_proxy(self):
+        stage = omni.usd.get_context().get_stage()
+        source_env = self.scene.env_prim_paths[0]
+        prim_path = f"{source_env}/CameraProxy"
+
+        root = UsdGeom.Xform.Define(stage, prim_path)
+        root_xform = UsdGeom.Xformable(root.GetPrim())
+        root_xform.ClearXformOpOrder()
+        root_xform.AddTranslateOp().Set(Gf.Vec3d(*self.cfg.camera.offset.pos))
+
+        w, x, y, z = self.cfg.camera.offset.rot
+        root_xform.AddOrientOp().Set(Gf.Quatf(float(w), Gf.Vec3f(float(x), float(y), float(z))))
+
+        body = UsdGeom.Cube.Define(stage, f"{prim_path}/Body")
+        body.GetSizeAttr().Set(1.0)
+        body_xform = UsdGeom.Xformable(body.GetPrim())
+        body_xform.ClearXformOpOrder()
+        body_xform.AddScaleOp().Set(Gf.Vec3f(0.08, 0.05, 0.04))
+        body.CreateDisplayColorAttr().Set([Gf.Vec3f(0.15, 0.85, 1.0)])
+
+        lens = UsdGeom.Cylinder.Define(stage, f"{prim_path}/Lens")
+        lens.GetRadiusAttr().Set(0.018)
+        lens.GetHeightAttr().Set(0.035)
+        lens_xform = UsdGeom.Xformable(lens.GetPrim())
+        lens_xform.ClearXformOpOrder()
+        lens_xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, -0.035))
+        lens.CreateDisplayColorAttr().Set([Gf.Vec3f(0.05, 0.05, 0.05)])
+
+        lens_ring = UsdGeom.Cylinder.Define(stage, f"{prim_path}/LensRing")
+        lens_ring.GetRadiusAttr().Set(0.022)
+        lens_ring.GetHeightAttr().Set(0.008)
+        ring_xform = UsdGeom.Xformable(lens_ring.GetPrim())
+        ring_xform.ClearXformOpOrder()
+        ring_xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, -0.055))
+        lens_ring.CreateDisplayColorAttr().Set([Gf.Vec3f(1.0, 0.6, 0.0)])
 
     def _create_peg_fixed_joint(self):
         stage = omni.usd.get_context().get_stage()
@@ -179,7 +218,9 @@ class LocalInsertEnv(DirectRLEnv):
 
     def _update_phase_state(self):
         self.contact_force_norm = torch.norm(self.force_smooth[:, 0:3], p=2, dim=-1)
-        contact_now = self.contact_force_norm > self.cfg_task.contact_force_threshold
+        xy_dist = torch.norm(self.peg_tip_pos[:, 0:2] - self.hole_top_pos[:, 0:2], p=2, dim=-1)
+        xy_close_enough = xy_dist < self.cfg_task.phase_switch_xy_threshold
+        contact_now = (self.contact_force_norm > self.cfg_task.contact_force_threshold) & xy_close_enough
         self.contact_hold_count = torch.where(
             contact_now,
             self.contact_hold_count + 1,

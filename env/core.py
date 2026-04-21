@@ -75,7 +75,7 @@ class LocalInsertEnv(DirectRLEnv):
         self.ep_succeeded = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self._identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self._action_step_count = 0
-        self._cached_depth = None
+        self._cached_rgb = None
 
     def _setup_scene(self):
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg(), translation=(0.0, 0.0, 0.0))
@@ -125,7 +125,8 @@ class LocalInsertEnv(DirectRLEnv):
         lens.GetHeightAttr().Set(0.035)
         lens_xform = UsdGeom.Xformable(lens.GetPrim())
         lens_xform.ClearXformOpOrder()
-        lens_xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, -0.035))
+        lens_xform.AddTranslateOp().Set(Gf.Vec3d(0.035, 0.0, 0.0))
+        lens_xform.AddRotateYOp().Set(90.0)
         lens.CreateDisplayColorAttr().Set([Gf.Vec3f(0.05, 0.05, 0.05)])
 
         lens_ring = UsdGeom.Cylinder.Define(stage, f"{prim_path}/LensRing")
@@ -133,7 +134,8 @@ class LocalInsertEnv(DirectRLEnv):
         lens_ring.GetHeightAttr().Set(0.008)
         ring_xform = UsdGeom.Xformable(lens_ring.GetPrim())
         ring_xform.ClearXformOpOrder()
-        ring_xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, -0.055))
+        ring_xform.AddTranslateOp().Set(Gf.Vec3d(0.055, 0.0, 0.0))
+        ring_xform.AddRotateYOp().Set(90.0)
         lens_ring.CreateDisplayColorAttr().Set([Gf.Vec3f(1.0, 0.6, 0.0)])
 
     def _create_peg_fixed_joint(self):

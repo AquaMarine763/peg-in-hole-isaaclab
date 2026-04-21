@@ -18,7 +18,7 @@
 - UR10e 机械臂
 - 固定在末端、与最后一节机械臂同轴并朝下伸出的圆柱 peg
 - 底面贴地、顶部带孔的大尺寸 block
-- 外部固定深度相机
+- 外部固定相机（当前观测使用灰度 RGB）
 - wrist link 力/力矩观测
 
 ## 当前几何尺寸
@@ -49,15 +49,15 @@
 
 - peg 挂载偏移：`[0.0, 0.0, -0.01]`（相对 `wrist_3_link` 沿局部 Z 负方向下移 10 mm）
 - 固定关节安装旋转：绕 X 轴 `180°`
-- 当前 fixed ready pose 下，实测 peg tip 大致位于：`(0.659, 0.174, 0.384)`
+- 当前 fixed ready pose 下，实测 peg tip 大致位于：`(0.659, 0.174, 0.640)`
 - 当前 hole 顶面 Z：`0.140 m`
-- 因而当前 fixed ready pose 下的初始 peg-to-hole 顶面高度差大致为：`0.244 m`（244 mm），接近目标 `0.25 m`，具体接触前 z gap 会随 rollout 变化
+- 因而当前 fixed ready pose 下的初始 peg-to-hole 顶面高度差大致为：`0.500 m`（500 mm），具体接触前 z gap 会随 rollout 变化
 
 ### Camera / Workspace Related Geometry
 
-- 外部相机位置：`(0.50, -0.07, 0.66)`
-- 相机四元数：`(0.926571, 0.239775, -0.072598, -0.280543)`
-- 深度图分辨率：`84 × 84`
+- 外部相机位置：`(0.05, -0.75, 0.85)`
+- 相机四元数：`(0.861234, -0.099822, 0.185958, 0.462311)`
+- 图像分辨率：`160 × 160`
 - 当前 hole workspace 中心：`(0.66, 0.17)`
 - 当前 hole workspace 半宽：`(0.04, 0.04)`
 - 当前 hole workspace 范围：
@@ -73,12 +73,12 @@
 - peg 与 hole 初始位置不再强绑定，但 hole 仍限制在固定相机稳定可见、UR10e 可达的局部工作区内
 - robot / peg 初始 ready pose 固定，peg 初始保持竖直，避免同时引入搜索和姿态随机化两种难度
 - 动作空间 6D：pre-contact 阶段只用 3D 平移（旋转 mask 为 0，IK 维持 nominal 朝向）；post-contact 阶段放开 3D 旋转自由度用于插入修正
-- 当前加入局部任务保护：peg tip 与 hole 的 XY 距离超过 80mm 直接 reset，避免策略早期跑飞
+- 当前加入局部任务保护：peg tip 与 hole 的 XY 距离超过 160mm 直接 reset，避免策略早期跑飞
 - 当前 reward 采用两阶段设计：pre-contact 视觉搜索主导；post-contact 接触修正 / 插入主导；两阶段共享成功奖励
 - 插入奖励仍使用 soft alignment gate：`exp(-xy²/(2σ²))`, σ=5mm，让策略在非完美对齐时也能获得插入梯度信号
-- 相机当前采用更远的固定外部深度视角：沿 workspace center 的观察射线大约拉到旧距离的两倍，并显式 look-at hole 工作区中心，配合更高的 `84 × 84` 分辨率来兼顾可见范围和孔的像素占比
+- 相机当前采用更远的固定外部视角：沿 workspace center 的观察射线继续拉远，并显式 look-at hole 工作区中心上方一点；当前 actor 看到的是由外部 RGB 图像转换得到的灰度单通道图像，分辨率为 `160 × 160`
 - 当前采用显式两阶段单策略：Phase 0 为接触前视觉搜索 / 接近，Phase 1 为接触后插入；phase flag 会进入 observation，并在训练/demo 输出中显示
-- 当前 observation 采用 asymmetric actor-critic：actor 看 `policy + depth`，critic 看 `policy + privileged hole_xy`；其中 privileged `hole_xy` 只在训练时给 critic，用来改善 pre-contact 视觉搜索阶段的 value estimation
+- 当前 observation 采用 asymmetric actor-critic：actor 看 `policy + grayscale rgb`，critic 看 `policy + privileged hole_xy`；其中 privileged `hole_xy` 只在训练时给 critic，用来改善 pre-contact 视觉搜索阶段的 value estimation
 - 当前控制链：末端局部位移+旋转 -> 6-DOF Damped Least-Squares IK -> 关节位置目标；pre-contact 自动维持 reset 时的 nominal 朝向
 - Reset 时会先刷新 robot articulation 内部状态，再读取 EE 姿态与 nominal 朝向，避免沿用上个 episode 的倾斜姿态；当前验证 peg 初始轴线与 hole 一样沿世界 Z 轴
 - Force penalty scale 当前为 0.05，用于抑制暴力接触
@@ -117,7 +117,7 @@
 
 ## 当前 reward 设计
 
-reward 当前围绕“先找孔，再接近，再插入”设计，而不是默认 peg 已经在孔口正上方。
+reward 当前已临时精简为一个“视觉找孔版”最小方案，核心只强调 pre-contact 横向找孔，而不是把接触后插入作为当前训练目标。
 
 ### Phase 0: pre-contact（视觉搜索 / 接近）
 
@@ -134,12 +134,12 @@ reward 当前围绕“先找孔，再接近，再插入”设计，而不是默�
    - 奖励 peg tip 与 hole top 的 XY 距离进步
 
 2. `precontact_distance_progress_reward`
-   - 很弱的 3D 距离进步奖励
-   - 当前也会乘上 `pre_align_gate`，避免在 XY 明显没对准时仅靠竖直下压就持续拿到距离奖励
+   - 当前已降为 `0`，不再提供 3D 距离进步奖励
+   - 目的是彻底消除"不靠视觉也能靠下压拿 reward"的局部最优
 
 3. `precontact_z_progress_reward`
-   - 奖励 z gap 变小（向下接近）
-   - 但会乘上 `pre_align_gate`
+   - 当前已降为 `0`
+   - 也就是当前最小版本不再奖励 pre-contact 阶段的向下接近
 
 4. `pre_align_gate`
    - 形式：`exp(-xy² / (2σ²))`
@@ -161,22 +161,14 @@ reward 当前围绕“先找孔，再接近，再插入”设计，而不是默�
    - 当前 pre-contact 动作阈值为 `XY=0.5mm, Z=0.8mm`
    - 仍允许向下接近，但不再像之前那样明显偏向“瞬间下冲”
 
-### Phase 1: post-contact（接触修正 / 插入）
+### Phase 1: post-contact（当前最小版本基本关闭）
 
-post-contact 继续保持：
+当前为了先验证视觉找孔，post-contact 相关 reward 基本都置为 `0`：
 
-1. `postcontact_xy_progress_reward`
-   - 接触后继续横向修正
-
-2. `postcontact_distance_progress_reward`
-   - 接触后辅助 3D 接近
-
-3. `insertion_progress_reward * soft_gate`
-   - 插入深度进步奖励
-   - 仍由 soft gate 调制，避免只有完美对齐时才有插入梯度
-
-4. `force_penalty`
-   - 惩罚暴力接触
+- `postcontact_xy_progress_reward = 0`
+- `postcontact_distance_progress_reward = 0`
+- `postcontact_insertion_progress_reward = 0`
+- `postcontact_force_penalty = 0`
 
 ### 当前阶段化保护
 
@@ -189,6 +181,14 @@ post-contact 继续保持：
 - `action_penalty`
 - `too_far reset`
 - `timeout`
+
+### 当前 success 定义
+
+当前视觉找孔最小版本的 success 只看：
+
+- `xy_dist < 5mm`
+
+不再要求插入深度条件。
 
 ## 当前工作流程
 
@@ -217,6 +217,7 @@ clean_isaaclab_local_insert/
 ├── play.py
 ├── inspect_scene.py
 ├── generate_assets.py
+├── SYSTEM_OVERVIEW.md
 ├── README.md
 ├── AGENTS.md
 ├── COMMANDS.md
@@ -239,6 +240,8 @@ clean_isaaclab_local_insert/
 ## 文件约定
 
 - `AGENTS.md`：长期知识库
+- `SYSTEM_OVERVIEW.md`：当前系统结构、模块协作、输入输出与训练时序总结
+- `plot_training_stats.py`：从指定 TensorBoard event 文件导出训练统计图（loss / reward / xy / zgap / force / done counts）
 - `COMMANDS.md`：常用指令
 - `LOGBOOK.md`：日期 + 一两句话工作记录
 - `notes/NOTES.md`：学习笔记
@@ -247,9 +250,9 @@ clean_isaaclab_local_insert/
 
 当前 `inspect_scene.py` 还支持两个专门的调试功能：
 
-- `--save_reset_depth`：在 reset 后保存当前 depth 观测，默认输出到 `debug_outputs/reset_depth/<时间戳>/`，其中包含 `.png`（便于直接查看）、`.pt`（原始 tensor）和 `.json`（统计信息）；PNG 默认按 `0.15m ~ 0.50m` 的工作区深度范围做高对比可视化，而不是直接保存 0–3m 全局线性归一化结果
+- `--save_reset_rgb`：在 reset 后同时保存当前原始 RGB 与灰度 RGB 观测，默认输出到 `debug_outputs/reset_rgb/<时间戳>/`，其中包含原始 RGB / 灰度 RGB 各自的 `.png`、`.pt`，以及 `.json`（统计信息）
 - `--lock_viewport_to_task_camera`：把 GUI viewport 切换到 `/World/envs/env_0/Camera`，直接从任务相机视角看场景
-- `--show_camera_marker`：启用任务相机的实体可视化代理（机身盒子 + 镜头圆柱）。当前这个代理不再由 `play.py / inspect_scene.py` 临时注入，而是在 env scene setup 中作为稳定的纯视觉场景物体生成，不参与物理与碰撞
+- `--show_camera_marker`：启用任务相机的实体可视化代理（机身盒子 + 镜头圆柱）。当前这个代理不再由 `play.py / inspect_scene.py` 临时注入，而是在 env scene setup 中作为稳定的纯视觉场景物体生成，不参与物理与碰撞；镜头方向已按 Isaac 相机的本地 `+X` forward 约定对齐到真实任务相机朝向
 
 当前如果需要确认“demo 实际使用的任务相机位置和朝向”，优先建议在 `play.py` 里使用 `--show_camera_marker`，因为它通过 env scene setup 使用同一个 `LocalInsertEnvCfg.camera.offset` 生成稳定的纯视觉 proxy。
 

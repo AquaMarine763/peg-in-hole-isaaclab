@@ -55,9 +55,20 @@
 - 放弃抽象 marker，改成更直观的实体相机代理：用一个可见机身盒子加镜头圆柱表示任务相机的位置和朝向；同时把相机从 `(0.61, 0.0, 0.28)` 拉远到 `(0.58, 0.05, 0.40)`，并将深度图分辨率从 `48×48` 提高到 `64×64`，以减少近距离遮挡风险并补偿像素占比。
 - 将深度图分辨率进一步从 `64×64` 提高到 `84×84`，在相机拉远后的前提下进一步提升孔口与 peg 的可见像素占比，方便视觉搜索阶段学习更细的局部几何线索。
 - 撤掉 `play.py / inspect_scene.py` 里不稳定的临时相机代理注入逻辑，改为在 `env/core.py` 的 scene setup 中生成稳定的纯视觉相机代理（机身盒子 + 镜头圆柱）。这样 demo / inspect 共享同一个环境级相机代理，不参与物理和碰撞，也避免脚本级临时 prim 注入带来的 GUI 回归。
-- 将相机继续拉远并重新对准 workspace 中心：从 `(0.58, 0.05, 0.40)` 调整到 `(0.50, -0.07, 0.66)`，并用 look-at 方式重新计算四元数 `(0.926571, 0.239775, -0.072598, -0.280543)`，确保相机显式朝向 hole 初始化区域中心 `(0.66, 0.17, 0.14)`。
+- 相机继续往更远、更高的候选位置调整：改到 `(0.05, -0.75, 0.85)`，并按 Isaac 相机 `+X` 为 forward 的约定 look-at `(0.66, 0.17, 0.35)`，得到新的四元数 `(0.861234, -0.099822, 0.185958, 0.462311)`；目的是让 `z_gap≈0.50m` 条件下更高的 peg 起点和整个 hole workspace 都更容易进入画面。
+- 修正相机实体代理的局部镜头朝向：原来代理镜头沿本地 `-Z` 摆放，导致在 inspect/demo 中看起来和真实任务相机朝向不一致；现在改成沿本地 `+X` forward 对齐 Isaac 相机约定，使代理朝向与真实任务相机输出一致。
+- 修复 `train.py` 的 TensorBoard 写入链路：之前只初始化 writer 并缓存 env step 指标，但没有调用 `runner.logger.log(...)`，导致 event 文件只有 88 字节空壳、TensorBoard 无 dashboard。现在已补上 logger.log、writer.flush() 和 writer.close()，训练后应该能看到 loss/reward/xy 等标量曲线。
+- 新增 `plot_training_stats.py`：支持手动指定 TensorBoard event 文件，导出 8 张单图（value/surrogate/entropy loss、reward、xy、zgap、force、done counts），默认输出到 `debug_outputs/training_plots/<时间戳>/`，方便做实验对比和汇报。
 - 继续把 reward 往“先找孔再下压”方向推进：pre-contact 的 3D distance progress 改为也受 `pre_align_gate` 调制，`precontact_distance_progress_scale` 从 `5.0` 降到 `1.0`，`precontact_xy_progress_scale` 从 `120` 提高到 `160`，`misaligned_downward_penalty_scale` 从 `2.0` 提高到 `6.0`，并把 pre-contact Z 动作阈值从 `2.0mm` 收紧到 `1.2mm`，减少策略早期直接向下冲的诱因。
 - 训练架构继续改进为 asymmetric actor-critic + privileged critic：保持 actor 输入不变（`policy + depth`），只给 critic 额外加入 `hole_xy` 特权真值，用来改善 pre-contact 视觉搜索阶段的 value estimation；相比让 critic 也看 depth，这个改法更轻量，也更符合当前 GPU/显存约束。
 - 继续强化“先找孔再下压”：将 pre-contact Z 动作阈值从 `1.2mm` 进一步收紧到 `0.8mm`，同时把 phase 切换改为更保守的 `force_norm > 8N` 且持续 `5` 步，减少“先碰到 block 就切 phase”的捷径；pre-contact 的 `distance_progress_scale` 再降到 `0.25`，`z_progress_scale` 再降到 `25`，`misaligned_downward_penalty_scale` 再升到 `10`，进一步压制早期下冲局部最优。
 - 继续把“先找孔再下压”做成更硬约束：把 misaligned downward 判定阈值从 `20mm` 收紧到 `15mm`，并新增 `misaligned_downward_progress_penalty`，当 `xy_dist > 15mm` 且 peg 真实发生 downward progress 时直接处罚实际向下位移，让“没对准就继续往下压”在 reward 上更明确地变成净负收益。
 - 当前 phase 切换再加一层 XY 保护：只有 `force_norm > 8N` 且 `xy_dist < 20mm` 并持续 `5` 步，才允许进入 post-contact，避免策略靠“偏着撞到 block”直接切到接触后阶段。
+- 在 `rgb` 方向上做最小迁移：把相机输出从 depth 切到 RGB，并在 observation 中直接把 RGB 转成灰度单通道 `rgb` 输入给 actor；critic 继续保持 `policy + hole_xy`。同时把 `inspect_scene.py` 的调试保存链路从 `reset_depth` 改成 `reset_rgb`，用于保存灰度 RGB 观测而不是 depth 图。
+- 进一步增强 RGB 调试链路：`inspect_scene.py --save_reset_rgb` 现在会同时保存原始 RGB 和灰度 RGB 两套输出，便于区分“灰度化把信息洗掉了”还是“相机本身就没拍到有用结构”。
+- 新增 `SYSTEM_OVERVIEW.md`，把当前项目的训练框架、模块职责、输入输出关系以及“单次训练迭代”的完整时序整理成一份独立总结文档，便于后续快速理解整个系统是怎么工作的。
+- 重写 `PROGRESS_REPORT.md`，把当前训练框架、控制链、视觉系统、两阶段 reward、工作区设置、actor/critic 设计、当前问题与下一步建议系统整理成单文件总结，作为当前项目阶段的完整进展展示。
+- 新增 `SYSTEM_OVERVIEW_REPORT.md`：基于 `SYSTEM_OVERVIEW.md` 整理的对外展示/汇报版本，用表格和结构化布局替代了代码味更重的内部版，可用于项目汇报或对外交流。
+- 按方案 B 大幅改变 pre-contact reward 结构：`precontact_distance_progress_scale` 从 `0.25` 降为 `0`（彻底去掉 3D 距离进步奖励），`precontact_z_progress_scale` 从 `25` 降为 `5`（极弱且完全受 pre_align_gate 控制），目的是彻底消除"不靠视觉也能靠下压拿 reward"的局部最优，逼策略先学视觉 XY 搜索。
+- 纠正先前未落实到位的环境设置：这次真正把相机分辨率改为 `160×160`，并通过直接抬高 robot articulation root `z=0.256m` 的方式，把 peg tip 到 hole 顶面的初始高度差从 `0.244m` 提升到约 `0.50m`。1-iteration 烟雾测试已通过，当前更高起始高度下 rollout 的平均 `zgap` 明显变大，但 too_far 也随之增多，需要后续继续观察视觉搜索行为是否改善。
+- 将 `too_far_xy_threshold` 从 `0.08m` 放宽到 `0.16m`，让 actor 在还没学会视觉搜索时有更长的空中探索轨迹，避免 episode 因为过早出界而很快结束。

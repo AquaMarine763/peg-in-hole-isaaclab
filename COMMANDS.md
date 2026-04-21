@@ -50,16 +50,10 @@ python play.py --model logs/local_insert/model_500.pt --num_envs 1
 python inspect_scene.py
 ```
 
-保存 reset 时的 depth 图（会输出 `.png`、`.pt`、`.json` 到 `debug_outputs/reset_depth/<时间戳>/`）：
+保存 reset 时的 RGB 调试图（会同时输出**原始 RGB**和**灰度 RGB**两套 `.png/.pt`，以及 `.json` 到 `debug_outputs/reset_rgb/<时间戳>/`）：
 
 ```bash
-python inspect_scene.py --save_reset_depth
-```
-
-如果你想让保存出来的 depth 图更适合人眼看工作区层次（默认可视化范围就是 `0.15m ~ 0.50m`）：
-
-```bash
-python inspect_scene.py --save_reset_depth --depth_viz_near 0.15 --depth_viz_far 0.50
+python inspect_scene.py --save_reset_rgb
 ```
 
 如果你想让窗口直接切到任务相机视角：
@@ -77,7 +71,7 @@ python inspect_scene.py --show_camera_marker
 两者一起用：
 
 ```bash
-python inspect_scene.py --save_reset_depth --lock_viewport_to_task_camera
+python inspect_scene.py --save_reset_rgb --lock_viewport_to_task_camera
 ```
 
 在 demo 里显示任务相机标记：
@@ -100,4 +94,12 @@ python inspect_scene.py --auto_reset_seconds 5
 
 ```bash
 python train.py --num_envs 1 --max_iterations 1 --headless
+```
+
+## 训练统计图导出
+
+手动指定一个 TensorBoard event 文件，导出 8 张单图到 `debug_outputs/training_plots/<时间戳>/`：
+
+```bash
+python plot_training_stats.py --event_file logs/local_insert/events.out.tfevents.xxxxx --smooth 5
 ```

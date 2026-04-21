@@ -46,27 +46,27 @@ class TaskCfg:
     hole_workspace_xy_center: list = [0.66, 0.17]
     hole_workspace_xy_half_range: list = [0.04, 0.04]
     max_initial_xy_dist: float = 0.06
-    success_xy_tolerance: float = 0.002
+    success_xy_tolerance: float = 0.005
     success_depth_fraction: float = 0.8
-    too_far_xy_threshold: float = 0.08
+    too_far_xy_threshold: float = 0.16
     soft_gate_sigma: float = 0.005
     contact_force_threshold: float = 8.0
     contact_persistence_steps: int = 5
     phase_switch_xy_threshold: float = 0.02
-    precontact_distance_progress_scale: float = 0.25
-    precontact_xy_progress_scale: float = 160.0
-    precontact_z_progress_scale: float = 25.0
+    precontact_distance_progress_scale: float = 0.0
+    precontact_xy_progress_scale: float = 200.0
+    precontact_z_progress_scale: float = 0.0
     precontact_z_gate_sigma: float = 0.015
     precontact_xy_penalty_scale: float = 15.0
     precontact_misaligned_downward_xy_threshold: float = 0.015
     precontact_misaligned_downward_penalty_scale: float = 10.0
     precontact_misaligned_downward_progress_penalty_scale: float = 80.0
-    postcontact_xy_progress_scale: float = 80.0
-    postcontact_distance_progress_scale: float = 20.0
-    postcontact_insertion_progress_scale: float = 320.0
-    postcontact_force_penalty_scale: float = 0.05
-    action_penalty_scale: float = 0.0015
-    success_bonus: float = 100.0
+    postcontact_xy_progress_scale: float = 0.0
+    postcontact_distance_progress_scale: float = 0.0
+    postcontact_insertion_progress_scale: float = 0.0
+    postcontact_force_penalty_scale: float = 0.0
+    action_penalty_scale: float = 0.001
+    success_bonus: float = 50.0
     peg_mount_offset: list = [0.0, 0.0, -0.01]
 
 
@@ -120,6 +120,7 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
             activate_contact_sensors=True,
         ),
         init_state=ArticulationCfg.InitialStateCfg(
+            pos=(0.0, 0.0, 0.256),
             joint_pos={
                 "shoulder_pan_joint": 0.0,
                 "shoulder_lift_joint": -1.1,
@@ -179,8 +180,8 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
     camera: TiledCameraCfg = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.50, -0.07, 0.66),
-            rot=(0.926571, 0.239775, -0.072598, -0.280543),
+            pos=(0.05, -0.75, 0.85),
+            rot=(0.861234, -0.099822, 0.185958, 0.462311),
             convention="world",
         ),
         spawn=sim_utils.PinholeCameraCfg(
@@ -188,8 +189,8 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
             horizontal_aperture=20.955,
             clipping_range=(0.1, 20.0),
         ),
-        width=84,
-        height=84,
-        data_types=["depth"],
+        width=160,
+        height=160,
+        data_types=["rgb"],
         update_period=0,
     )

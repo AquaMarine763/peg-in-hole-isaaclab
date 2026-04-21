@@ -76,4 +76,4 @@ def reset_idx(env, env_ids: torch.Tensor | None):
     env.force_smooth[env_ids] = 0.0
     env.actions[env_ids] = 0.0
     env.prev_actions[env_ids] = 0.0
-    env._cached_depth = None
+    env._cached_rgb = None

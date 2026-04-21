@@ -57,11 +57,12 @@ def main():
     runner.alg.train_mode()
     runner.logger.init_logging_writer()
     start = time.time()
+    start_it = 0
     interrupted = False
 
     try:
         for it in range(agent_cfg.max_iterations):
-            iter_start = time.time()
+            rollout_start = time.time()
             metric_sums = defaultdict(float)
             with torch.inference_mode():
                 for _ in range(agent_cfg.num_steps_per_env):
@@ -78,8 +79,26 @@ def main():
                             metric_sums[key] += float(value.item())
                 runner.alg.compute_returns(obs)
 
+            collect_time = time.time() - rollout_start
+
+            learn_start = time.time()
             loss_dict = runner.alg.update()
+            learn_time = time.time() - learn_start
             runner.current_learning_iteration = it
+
+            runner.logger.log(
+                it=it,
+                start_it=start_it,
+                total_it=agent_cfg.max_iterations,
+                collect_time=collect_time,
+                learn_time=learn_time,
+                loss_dict=loss_dict,
+                learning_rate=runner.alg.learning_rate,
+                action_std=runner.alg.get_policy().output_std,
+                rnd_weight=getattr(getattr(runner.alg, "rnd", None), "weight", None),
+            )
+            if getattr(runner.logger, "writer", None) is not None:
+                runner.logger.writer.flush()
 
             if (it + 1) % agent_cfg.save_interval == 0 or (it + 1) == agent_cfg.max_iterations:
                 runner.save(os.path.join(LOG_DIR, f"model_{it + 1}.pt"))
@@ -88,7 +107,6 @@ def main():
             eta = elapsed / (it + 1) * (agent_cfg.max_iterations - it - 1)
             eta_m, eta_s = divmod(int(eta), 60)
             eta_h, eta_m = divmod(eta_m, 60)
-            collect_time = time.time() - iter_start
             rew_str = f"{rewards.mean().item():+.3f}"
             loss_str = f"{loss_dict.get('value', 0):.4f}" if isinstance(loss_dict, dict) else "?"
             steps = max(agent_cfg.num_steps_per_env, 1)
@@ -122,6 +140,10 @@ def main():
         total = time.time() - start
         print(f"\nTraining complete: {agent_cfg.max_iterations} iterations in {total / 60:.1f} minutes")
         print(f"Final model saved to: {os.path.join(LOG_DIR, f'model_{agent_cfg.max_iterations}.pt')}")
+
+    if getattr(runner.logger, "writer", None) is not None:
+        runner.logger.writer.flush()
+        runner.logger.writer.close()
 
     env.close()
 

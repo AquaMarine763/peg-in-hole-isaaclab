@@ -1,210 +1,438 @@
-# Peg-in-Hole 强化学习项目进度报告
+# Peg-in-Hole Isaac Lab — 当前训练框架与项目进展总结
 
-## 1. 项目概述
+## 1. 当前项目目标
 
-本项目使用深度强化学习（Deep RL）训练 UR10e 机械臂完成精密 peg-in-hole 插入任务。系统采用多模态感知（depth camera + force/torque + proprioception），通过 PPO 算法学习从视觉粗对准到力引导插入的完整局部插入策略。
+当前项目的目标不是“大范围全局找孔”，而是：
 
-- **仿真平台**：MuJoCo → NVIDIA Isaac Lab（Isaac Sim）
-- **训练算法**：PPO（via rsl_rl / OnPolicyRunner）
-- **机械臂**：Universal Robots UR10e
-- **参考文献**：[Sim2Real for Peg-Hole Insertion with Eye-in-Hand Camera](https://arxiv.org/pdf/2005.14401.pdf)
+- 机器人从固定 ready pose 出发
+- peg 初始保持竖直
+- hole 在固定外部相机可稳定观测的受限工作区内随机
+- 强化学习策略先通过视觉完成局部找孔 / 接近
+- 然后再完成接触后修正与插入
 
----
+也就是说，当前任务已经从最早的“peg/hole 强绑定局部 handoff”升级为：
 
-## 2. 项目演进历程
+> **受限工作区视觉搜索 + 插入**
 
-### 阶段一：MuJoCo 环境搭建
-
-- 仿真环境中加入 UR5e 机械臂（替代原先悬浮的 peg），相机改为外部相机
-- 训练效果不理想，发现相机存在遮挡问题，调整到不会被遮挡的位置
-- 拆分庞大的 `env.py` 为六个子模块（`cfg.py`, `core.py`, `observations.py`, `reset.py`, `rewards.py`, `success.py`），并优化了一版训练模型
-
-### 阶段二：性能瓶颈发现
-
-- 训练速度极慢，定位根因：
-  - MuJoCo 物理仿真为纯 CPU 计算
-  - 相机渲染 CPU/GPU 同步开销大
-  - 视觉数据传入慢，模型一直在等待 visual observation
-- 将 MuJoCo 版本上传 GitHub
-
-### 阶段三：Isaac Lab 平台迁移
-
-- 安装并配置 Isaac Lab 环境
-- 发现 Isaac Lab 的仿真环境无法在 WSL2 中运行，将项目克隆到 Windows 环境
-- 修改项目文件，将全部 MuJoCo 依赖替换为 Isaac Lab 依赖
-- 机械臂升级为 UR10e
-
-### 阶段四：GPU 显存优化
-
-- Isaac Sim 对 GPU 显存要求高（本机仅 8GB），采取以下措施：
-  - 改为异步渲染（每十步渲染一帧）→ 后恢复为每步一帧
-  - 将 RGB 图像改为更适合机器人操作的 depth map（记录每个像素点到相机的距离）
-  - 减少并行环境数（从 16 降到 8）以降低 GPU 渲染压力
-
-### 阶段五：Clean 子项目重建
-
-- 训练效果不好且动作幅度过大，重新参考教程，简化控制链
-- 新建 `clean_isaaclab_local_insert` 子项目，目标：
-  - 只保留局部插入任务（假设视觉粗定位已完成）
-  - 控制链简化为：末端局部位移 → 差分 IK → 关节位置目标
-  - 策略只控制 3D 平移，姿态固定保持
-
-### 阶段六：奖励工程与训练调优
-
-| 问题 | 解决方案 |
-|------|---------|
-| Demo 时 peg block 离基座太近 | 修正 peg block 初始位置，hole 工作区前移至 X=0.50 |
-| 大部分 episode 因 too_far 终止 | too_far 判定从 40mm 放宽到 80mm |
-| 训练效果不好 | 拆分为 pre-contact / post-contact 两阶段，分别给予不同 reward |
-| Pre-contact 被几何真值过度塑形 | 移除强下压/XY 真值项，改为弱 distance progress reward，保持视觉主导 |
-| Pre-contact 阶段力传感器噪声影响训练 | Pre-contact 屏蔽 force observation（`force_history * phase_flag`） |
-| 水平移动过大导致 too_far | 缩小 pre-contact XY action：1mm → 0.5mm，加强 XY penalty（scale=15） |
-| Peg 已插入但阶段不切换（需同时满足力检测+向下命令+向下运动） | 放松切换条件：只要力传感器连续 3 步检测到接触就切换 |
+它仍然不是全局搜索任务，但已经明确要求视觉在 pre-contact 阶段发挥作用。
 
 ---
 
-## 3. 当前系统架构
+## 2. 当前系统整体架构
 
-### 3.1 场景配置
+### 2.1 仿真与训练平台
 
-```
-UR10e 机械臂
-  └── wrist_3_link (末端)
-        └── [FixedJoint] Peg (圆柱, 朝下)
+- 仿真平台：**NVIDIA Isaac Lab / Isaac Sim**
+- 训练算法：**PPO**（RSL-RL / `OnPolicyRunner`）
+- 机器人：**UR10e**
+- 任务类型：**DirectRLEnv**
 
-地面
-  └── Hole Block (固定, 顶面带孔)
+### 2.2 场景组成
 
-外部固定 Depth Camera (侧上方俯视工作区)
-```
+当前最小场景包括：
 
-**核心几何参数：**
+- UR10e 机械臂
+- 固定在 `wrist_3_link` 上的圆柱 peg
+- 底面贴地、顶部带孔的大尺寸 block
+- 外部固定相机（当前 actor 观测使用灰度 RGB）
+- wrist link 力/力矩观测
 
-| 参数 | 值 |
-|------|-----|
-| Peg 半径 | 15 mm |
-| Peg 高度 | 80 mm |
-| Hole clearance | 2.5 mm（单边） |
-| Hole 深度 | 50 mm |
-| Hole block 高度 | 140 mm |
-| Reset XY 偏差范围 | ±8 mm |
-| Reset Z 高度（peg tip 在孔口上方） | 10–15 mm |
+### 2.3 控制链
 
-### 3.2 控制链
+当前控制链是：
 
-```
-策略输出 action ∈ [-1, 1]³
-    ↓ EMA 平滑 (α = 0.05)
-    ↓ Phase-aware 缩放
-    ↓   Pre-contact:  [0.5mm, 0.5mm, 2.0mm]
-    ↓   Post-contact: [0.8mm, 0.8mm, 1.5mm]
-    ↓ 末端位移 → Damped Least-Squares IK (λ = 0.05)
-    ↓ 关节位置目标
-    ↓ Implicit Actuator (stiffness=800, damping=40)
+```text
+策略输出动作
+-> 末端局部位移/旋转目标
+-> 6-DOF Damped Least-Squares IK
+-> 关节位置目标
+-> Isaac Sim articulation / implicit actuator 执行
 ```
 
-### 3.3 Observation Space
+具体地：
 
-**Policy 向量（44D）：**
+- 动作空间：6D
+  - pre-contact：只放开 3D 平移，旋转 mask 为 0
+  - post-contact：放开 3D 旋转用于插入修正
+- pre-contact 保持 nominal 朝向
+- post-contact 允许策略做小范围姿态修正
 
-| 分量 | 维度 | 说明 |
-|------|------|------|
-| `joint_pos` | 6 | 关节角度 |
-| `joint_vel` | 6 | 关节角速度 |
-| `ee_pos` | 3 | 末端位置 |
-| `ee_quat` | 4 | 末端姿态四元数 |
-| `phase_flag` | 1 | 阶段标志（0=pre-contact, 1=post-contact） |
-| `force_history` | 24 | 4 步 × 6D 力/力矩历史（pre-contact 阶段屏蔽为 0） |
+---
 
-**Depth 图像：** 48×48 单通道，clamp 到 [0, 3m] 后归一化到 [0, 1]
+## 3. 当前几何与工作区设置
 
-### 3.4 两阶段 Reward 设计
+### 3.1 Peg
 
-**Phase 切换条件：** 力传感器 `force_norm > 5.0 N` 且连续保持 ≥ 3 步
+- 半径：15 mm
+- 直径：30 mm
+- 高度：80 mm
+- 资产原点：peg 顶面中心
+- 朝向：局部 `-Z`
 
-**Reward 公式：**
+### 3.2 Hole / Block
 
+- 孔直径：35 mm
+- 单边间隙：2.5 mm
+- 孔深：50 mm
+- block 尺寸：180 mm × 180 mm × 140 mm
+- hole 顶面高度：`z = 0.14 m`
+
+### 3.3 Peg 挂载与 ready pose
+
+- 挂载偏移：`[0.0, 0.0, -0.01]`
+- 固定关节安装旋转：绕 X 轴 180°
+- 当前固定 ready pose 关节角：
+
+```text
+[0.0, -1.55, 1.95, -1.97, -1.5708, 0.0]
 ```
-reward = dist_reward + xy_reward + insertion_reward
-       - force_penalty - action_penalty - xy_penalty
-       + success_bonus
+
+- 当前 fixed ready pose 下，peg tip 大致为：
+
+```text
+(0.659, 0.174, 0.384)
+```
+
+- 当前 peg tip 到 hole 顶面的初始高度差大致为：
+
+```text
+0.244 m
+```
+
+### 3.4 Hole workspace
+
+当前 hole 在以下 workspace 内随机：
+
+- center：`(0.66, 0.17)`
+- half range：`(0.04, 0.04)`
+
+即：
+
+- `x ∈ [0.62, 0.70]`
+- `y ∈ [0.13, 0.21]`
+
+并且满足：
+
+- `initial_xy_dist <= 0.06 m`
+
+这个约束保证：
+
+- 不再强绑定 peg/hole
+- 但仍然是局部视觉搜索任务，而不是全局找孔
+
+---
+
+## 4. 当前视觉系统
+
+### 4.1 相机
+
+当前任务相机是一个固定外部相机：
+
+- 位置：`(0.2738, -0.4093, 0.6275)`
+- 朝向四元数：`(0.850951, -0.123478, 0.230721, 0.455415)`
+- 图像分辨率：`128 × 128`
+- 相机视线显式朝向 workspace center 上方一点
+
+### 4.2 当前视觉模态
+
+当前相机实际输出为：
+
+- **RGB**
+
+当前 actor 实际使用的是：
+
+- **灰度 RGB（单通道）**
+
+也就是说：
+
+```text
+camera rgb -> grayscale conversion -> actor obs["rgb"]
+```
+
+### 4.3 为什么这样设计
+
+当前采用灰度 RGB 而不是 full RGB，是为了：
+
+- 先验证“外观轮廓信息”是否比 depth 更适合找孔
+- 保持输入通道数为 1，减少额外变量
+- 更方便和旧版单通道 depth 做对比
+
+### 4.4 当前可视化/调试手段
+
+`inspect_scene.py` 现在支持：
+
+- `--save_reset_rgb`
+  - 同时保存 **原始 RGB** 和 **灰度 RGB**
+  - 输出目录：`debug_outputs/reset_rgb/<timestamp>/`
+- `--lock_viewport_to_task_camera`
+  - 把 GUI 视角切到任务相机
+- `--show_camera_marker`
+  - 显示任务相机实体代理（机身盒子 + 镜头圆柱）
+
+这些调试功能的意义是：
+
+- 区分“相机 framing 问题”与“灰度化导致的信息损失”
+- 判断 actor 真正看到的图像是否包含 peg/hole 有效结构
+
+---
+
+## 5. 当前 observation / actor-critic 设计
+
+### 5.1 actor 输入
+
+当前 actor 看：
+
+```text
+policy + grayscale rgb
+```
+
+其中 `policy` 包括：
+
+- 关节角
+- 关节速度
+- 末端位置
+- 末端姿态
+- phase flag
+- 力历史（pre-contact 阶段屏蔽）
+
+### 5.2 critic 输入
+
+当前 critic 看：
+
+```text
+policy + hole_state
+```
 
 其中：
-  pre_mask  = 1 - phase_flag
-  post_mask = phase_flag
 
-  dist_reward      = Δdist_3d × (pre_mask × 10.0 + post_mask × 20.0)
-  xy_reward        = Δxy_dist × 80.0 × pre_mask
-  insertion_reward  = Δinsertion_depth × 320.0 × alignment_gate × post_mask
-  force_penalty    = force_norm × 0.01 × post_mask
-  action_penalty   = ‖action‖₂ × 0.0015
-  xy_penalty       = xy_dist × 15.0 × pre_mask
-  success_bonus    = 100.0 （当 xy < 2mm 且插入深度 > 80% hole depth）
+- `hole_state = hole_top_pos[:, :2]`
+
+这是一种 **privileged critic** 设计：
+
+- actor 仍然必须靠视觉去找孔
+- critic 在训练时知道 hole 的平面位置，从而更准确地评估状态值
+
+### 5.3 当前设计意图
+
+这是一个典型的 **asymmetric actor-critic**：
+
+- actor：使用部署时可得信息
+- critic：使用额外真值帮助 value estimation
+
+当前这样做的主要目的是：
+
+- 提升 pre-contact 视觉搜索阶段的 credit assignment
+- 不增加 critic 的视觉 CNN 负担
+- 比“critic 也看 RGB/depth”更轻量、更稳
+
+---
+
+## 6. 当前 reward 设计
+
+当前 reward 明确围绕：
+
+> **先找孔，再接近，再插入**
+
+展开。
+
+### 6.1 pre-contact（视觉搜索 / 接近）
+
+核心原则：
+
+- 先奖励 XY 搜索
+- XY 变好后，向下接近才更值钱
+- 如果 XY 没找准就往下压，要罚
+
+#### 当前主要项
+
+1. `precontact_xy_progress_reward`
+   - 高权重主信号
+   - 奖励 peg tip 与 hole top 的 XY 距离进步
+
+2. `precontact_distance_progress_reward`
+   - 很弱的 3D 距离进步奖励
+   - 当前也要乘 `pre_align_gate`
+
+3. `precontact_z_progress_reward`
+   - 奖励 z gap 缩小
+   - 也乘 `pre_align_gate`
+
+4. `pre_align_gate`
+   - `exp(-xy² / (2σ²))`
+   - 当前 `σ = 15mm`
+
+5. `precontact_xy_penalty`
+   - 对较大的 XY 误差给软惩罚
+
+6. `misaligned_downward_penalty`
+   - 当 `xy_dist > 15mm` 仍有 downward action 时惩罚
+
+7. `misaligned_downward_progress_penalty`
+   - 当 `xy_dist > 15mm` 且 peg 真正向下走了时惩罚
+   - 这使得“没对准就继续下压”更明确地变成净负收益
+
+8. `pre-contact action scaling`
+   - 当前：
+     - XY = `0.5 mm`
+     - Z = `0.8 mm`
+
+### 6.2 post-contact（接触修正 / 插入）
+
+主要项：
+
+1. `postcontact_xy_progress_reward`
+2. `postcontact_distance_progress_reward`
+3. `insertion_progress_reward * soft_gate`
+4. `force_penalty`
+
+其中：
+
+- `soft_gate` 仍然是基于 XY 的软对齐门
+- 目的是在非完美对齐时也保留一些插入梯度
+
+### 6.3 当前 phase 切换保护
+
+当前从 pre-contact 切到 post-contact 的条件是：
+
+- `force_norm > 8N`
+- `xy_dist < 20mm`
+- 持续 `5` 步
+
+这条逻辑的意义是：
+
+- 避免策略通过“偏着撞到 block”直接切到 post-contact
+- 强迫策略在 pre-contact 阶段先完成至少基本的横向找孔
+
+---
+
+## 7. 当前训练流程
+
+当前推荐流程是：
+
+1. 先改一个局部模块（camera / reward / reset / observations 等）
+2. 用 `inspect_scene.py` 看 reset 几何和 RGB 图像是否合理
+3. 跑：
+
+```bash
+python train.py --num_envs 1 --max_iterations 1 --headless
 ```
 
-- `alignment_gate`：仅当 XY 偏差 < 3mm 时开启 insertion reward
-- Pre-contact 阶段完全屏蔽 force penalty，避免噪声干扰
+做烟雾测试
 
-### 3.5 终止条件
-
-| 条件 | 判定规则 |
-|------|---------|
-| **Success** | XY 偏差 < 2mm **且** 插入深度 > 40mm (80% × 50mm) |
-| **Too Far** | XY 偏差 > 80mm |
-| **Timeout** | episode 时长 > 8.0s |
-
-### 3.6 PPO 训练配置
-
-| 参数 | 值 |
-|------|-----|
-| `num_steps_per_env` | 128 |
-| `max_iterations` | 1000 |
-| `learning_rate` | 1e-4 (adaptive schedule) |
-| `gamma` | 0.995 |
-| `lam` (GAE λ) | 0.95 |
-| `clip_param` | 0.2 |
-| `num_learning_epochs` | 8 |
-| `num_mini_batches` | 4 |
-| `desired_kl` | 0.008 |
-| `num_envs` | 8 |
-| `sim dt` | 1/120 s |
-| `decimation` | 8 |
-
-**Actor**：CNN（[32, 64, 64] channels, kernel [8, 4, 3], stride [4, 2, 1]）→ MLP [256, 128]，输入 policy + depth
-
-**Critic**：MLP [512, 256, 128]，仅输入 policy 向量
+4. 必要时再用 demo / inspect 做行为和 framing 检查
+5. 更新：
+   - `AGENTS.md`
+   - `LOGBOOK.md`
+   - 必要时 `COMMANDS.md`
 
 ---
 
-## 4. 关键技术决策
+## 8. 当前项目进展判断
 
-| 决策 | 理由 |
-|------|------|
-| MuJoCo → Isaac Lab | MuJoCo 纯 CPU 仿真 + CPU/GPU 同步瓶颈导致训练极慢；Isaac Lab 支持 GPU 并行物理+渲染 |
-| RGB → Depth map | 深度图信息密度更高、维度更低，更适合机器人操作任务；降低 GPU 渲染压力 |
-| 两阶段 reward（pre/post-contact） | 接触前视觉主导学对准，接触后力主导学插入，避免信号冲突 |
-| Pre-contact 屏蔽 force | 未接触时力传感器读数为噪声，会干扰训练 |
-| Action 幅度 1mm → 0.5mm | 防止 pre-contact 阶段水平移动过大导致 too_far |
-| Phase 切换条件简化 | 原先要求力检测+向下命令+向下运动三条件同时满足，导致 peg 已插入但不切换；改为纯力阈值持续检测 |
-| 控制链简化（去掉 torque-level OSC） | 更接近教程风格，减少调试难度，让 IK 控制更稳定 |
+### 已经明确做对的事
+
+- 不再使用 peg/hole 强绑定初始化
+- phase 切换已经堵住“乱撞 block 就切 post-contact”的捷径
+- pre-contact reward 已经比早期更明确地偏向“先找孔再下压”
+- critic 现在至少知道 `hole_xy`
+- RGB 调试链路已可用，能同时保存原始 RGB 和灰度 RGB
+
+### 当前仍存在的核心问题
+
+1. **策略仍然倾向于快速下压**
+   - 虽然已经比早期更难直接走捷径，但 50 iteration 后仍然没学出稳定的 XY 搜索
+
+2. **视觉是否真正被 actor 利用，仍未被完全验证**
+   - 当前最好通过 no-vision baseline 来做对照实验
+
+3. **相机 framing 仍在调试中**
+   - 当前已经确认过一次：
+     - 之前的 look-at quaternion 用错了 Isaac 相机前向轴
+   - 现在又继续把相机拉远、提高分辨率
+   - 但仍需继续看新图像是否真的改善了 peg-hole 可见性
+
+4. **RGB 图像信息还未证明足够好**
+   - 原始 RGB / 灰度 RGB 对比已经说明：如果相机没拍到有用结构，灰度化和 full RGB 都不会自动解决问题
 
 ---
 
-## 5. 当前进展
+## 9. 当前版本最值得继续看的指标
 
-- ✅ Isaac Lab 环境搭建完成，clean 子项目结构清晰
-- ✅ 两阶段 reward 框架和 phase switching 逻辑实现
-- ✅ 烟雾测试全部通过（1 env × 1 iteration）
-- ✅ 短训练（16 envs × 20 iterations）已跑通
-- ✅ Demo 脚本（`play.py`）和场景检查工具（`inspect_scene.py`）可用
-- ⏳ 策略已学会局部靠近（XY 稳定在 10-13mm），但插入深度接近 0
-- ⏳ Too_far 终止比例已显著降低，但仍是主要失败模式
+在短训练中，当前最值得重点盯的指标是：
+
+- `xy_dist_mean`
+- `pre_align_gate_mean`
+- `phase_post_ratio`
+- `too_far_done_count`
+- `success_done_count`
+
+### 理想趋势
+
+- `xy_dist_mean` 逐步下降
+- `pre_align_gate_mean` 逐步升高
+- `phase_post_ratio` 不要一开始就很高
+- `too_far_done_count` 下降
+- `success_done_count` 上升
+
+如果仍然表现为：
+
+- `phase_post_ratio` 很低
+- `xy_dist_mean` 不下降
+- 但 `z_gap` 很快接近 0
+
+那就说明：
+
+> **策略仍然在“往下压”，而不是“先找孔”。**
 
 ---
 
-## 6. 后续计划
+## 10. 当前文件角色
 
-1. 继续调优 reward 参数，提升插入深度学习效果
-2. 考虑升级 GPU 显存（当前 8GB 限制了并行环境数）后进行大规模训练
-3. 进一步优化 reset 几何和 pre-contact 动作策略
-4. 训练收敛后进行 domain randomization 以支持 sim-to-real transfer
+- `env/cfg.py`
+  - 场景、工作区、相机、动作尺度、reward 参数
+- `env/reset.py`
+  - hole 随机化与 robot reset
+- `env/rewards.py`
+  - 两阶段 reward 逻辑
+- `env/observations.py`
+  - actor / critic observation 组装
+- `env/core.py`
+  - env 生命周期、scene setup、phase update、camera proxy
+- `train.py`
+  - PPO 训练入口
+- `play.py`
+  - demo / rollout 入口
+- `inspect_scene.py`
+  - 几何与视觉调试入口
+
+---
+
+## 11. 当前阶段的推荐下一步
+
+在继续大改前，当前最有价值的下一步通常是下面几类之一：
+
+1. **继续调相机 framing**
+   - 直到原始 RGB / 灰度 RGB 都能稳定看到 peg、hole、block 顶面三者关系
+
+2. **做 no-vision baseline**
+   - 验证视觉到底有没有贡献
+
+3. **继续强化 pre-contact 搜索阶段**
+   - 进一步减少“先下压”的局部最优
+
+4. **在 RGB 分支上继续短训练对比**
+   - 和旧 depth / 早期配置做对照
+
+---
+
+## 12. 总结一句话
+
+当前项目已经从“局部 handoff 插入”转向了：
+
+> **固定 ready pose + 受限工作区视觉搜索 + 接触后修正 + 插入**
+
+训练框架、控制链、两阶段 reward 和 asymmetric actor-critic 已基本稳定，当前主要挑战集中在：
+
+- 相机 framing 是否足够好
+- 视觉信息是否真的被策略利用
+- 如何彻底压制“先下压”的行为偏置

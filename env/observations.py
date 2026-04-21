@@ -53,12 +53,14 @@ def get_observations(env):
 
     if hasattr(env, "_camera"):
         env._action_step_count += 1
-        should_update = env._cached_depth is None or env._action_step_count % env.cfg.camera_step_interval == 0
+        should_update = env._cached_rgb is None or env._action_step_count % env.cfg.camera_step_interval == 0
         if should_update:
-            depth_raw = env._camera.data.output["depth"]
-            depth = depth_raw.permute(0, 3, 1, 2).contiguous()
-            depth = torch.clamp(depth, 0.0, 3.0) / 3.0
-            env._cached_depth = depth
-        obs["depth"] = env._cached_depth
+            rgb_raw = env._camera.data.output["rgb"]
+            rgb = rgb_raw[..., :3].permute(0, 3, 1, 2).contiguous().float()
+            if torch.max(rgb) > 1.0:
+                rgb = rgb / 255.0
+            gray = 0.299 * rgb[:, 0:1] + 0.587 * rgb[:, 1:2] + 0.114 * rgb[:, 2:3]
+            env._cached_rgb = gray.clamp(0.0, 1.0)
+        obs["rgb"] = env._cached_rgb
 
     return obs

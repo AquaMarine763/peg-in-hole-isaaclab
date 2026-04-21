@@ -12,10 +12,8 @@ parser.add_argument("--num_envs", type=int, default=1)
 parser.add_argument("--auto_reset_seconds", type=float, default=0.0)
 parser.add_argument("--reset_preview_frames", type=int, default=3)
 parser.add_argument("--reset_preview_seconds", type=float, default=0.5)
-parser.add_argument("--save_reset_depth", action="store_true")
-parser.add_argument("--depth_output_dir", type=str, default="debug_outputs/reset_depth")
-parser.add_argument("--depth_viz_near", type=float, default=0.15)
-parser.add_argument("--depth_viz_far", type=float, default=0.50)
+parser.add_argument("--save_reset_rgb", action="store_true")
+parser.add_argument("--rgb_output_dir", type=str, default="debug_outputs/reset_rgb")
 parser.add_argument("--lock_viewport_to_task_camera", action="store_true")
 parser.add_argument("--show_camera_marker", action="store_true")
 AppLauncher.add_app_launcher_args(parser)
@@ -60,8 +58,8 @@ def print_scene_state(env):
     print("z_gap:", round(float((e.peg_tip_pos[0, 2] - e.hole_top_pos[0, 2]).cpu()), 4))
 
 
-def resolve_depth_output_dir() -> Path:
-    base_dir = Path(args.depth_output_dir)
+def resolve_rgb_output_dir() -> Path:
+    base_dir = Path(args.rgb_output_dir)
     if not base_dir.is_absolute():
         base_dir = Path(__file__).resolve().parent / base_dir
     session_dir = base_dir / time.strftime("%Y%m%d_%H%M%S")
@@ -81,51 +79,53 @@ def lock_viewport_to_task_camera():
     print(f"[inspect_scene] Viewport locked to task camera: {camera_path}")
 
 
-def save_reset_depth(env, reset_index: int, output_dir: Path | None):
-    if not args.save_reset_depth:
+def save_reset_rgb(env, reset_index: int, output_dir: Path | None):
+    if not args.save_reset_rgb:
         return
     if output_dir is None:
         return
 
     obs = get_observations(env.unwrapped)
-    if "depth" not in obs:
-        print("[inspect_scene] No depth observation found; skipped saving reset depth.")
+    if "rgb" not in obs:
+        print("[inspect_scene] No rgb observation found; skipped saving reset rgb.")
         return
 
-    depth = obs["depth"][0, 0].detach().cpu()
-    depth_m = depth * 3.0
+    gray = obs["rgb"][0, 0].detach().cpu()
+    raw_rgb = env.unwrapped._camera.data.output["rgb"][0, ..., :3].detach().cpu().float()
+    if torch.max(raw_rgb) > 1.0:
+        raw_rgb = raw_rgb / 255.0
     stem = output_dir / f"reset_{reset_index:03d}"
 
-    torch.save(depth, stem.with_suffix(".pt"))
+    torch.save(raw_rgb.permute(2, 0, 1).contiguous(), stem.with_name(stem.name + "_rgb").with_suffix(".pt"))
+    torch.save(gray, stem.with_name(stem.name + "_gray").with_suffix(".pt"))
 
     metadata = {
         "reset_index": reset_index,
-        "shape": list(depth.shape),
-        "normalized_min": float(depth.min()),
-        "normalized_max": float(depth.max()),
-        "normalized_mean": float(depth.mean()),
-        "meters_min": float(depth_m.min()),
-        "meters_max": float(depth_m.max()),
-        "meters_mean": float(depth_m.mean()),
-        "viz_near_m": float(args.depth_viz_near),
-        "viz_far_m": float(args.depth_viz_far),
+        "rgb_shape_hwc": list(raw_rgb.shape),
+        "rgb_min": float(raw_rgb.min()),
+        "rgb_max": float(raw_rgb.max()),
+        "rgb_mean": float(raw_rgb.mean()),
+        "gray_shape": list(gray.shape),
+        "gray_min": float(gray.min()),
+        "gray_max": float(gray.max()),
+        "gray_mean": float(gray.mean()),
     }
     stem.with_suffix(".json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    viz_near = min(args.depth_viz_near, args.depth_viz_far)
-    viz_far = max(args.depth_viz_near, args.depth_viz_far)
-    depth_viz = depth_m.clamp(viz_near, viz_far)
-    depth_viz = 1.0 - (depth_viz - viz_near) / max(viz_far - viz_near, 1e-6)
-    image = (depth_viz.clamp(0.0, 1.0) * 255.0).to(torch.uint8).numpy()
-    png_path = stem.with_suffix(".png")
+    rgb_image = (raw_rgb.clamp(0.0, 1.0) * 255.0).to(torch.uint8).numpy()
+    gray_image = (gray.clamp(0.0, 1.0) * 255.0).to(torch.uint8).numpy()
+    rgb_png_path = stem.with_name(stem.name + "_rgb").with_suffix(".png")
+    gray_png_path = stem.with_name(stem.name + "_gray").with_suffix(".png")
     if Image is not None:
-        Image.fromarray(image).save(png_path)
-        print(f"[inspect_scene] Saved reset depth files to: {output_dir}")
+        Image.fromarray(rgb_image).save(rgb_png_path)
+        Image.fromarray(gray_image).save(gray_png_path)
+        print(f"[inspect_scene] Saved reset raw+gray rgb files to: {output_dir}")
     elif imageio is not None:
-        imageio.imwrite(png_path, image)
-        print(f"[inspect_scene] Saved reset depth files to: {output_dir}")
+        imageio.imwrite(rgb_png_path, rgb_image)
+        imageio.imwrite(gray_png_path, gray_image)
+        print(f"[inspect_scene] Saved reset raw+gray rgb files to: {output_dir}")
     else:
-        print(f"[inspect_scene] No PNG writer available; saved raw depth files to: {output_dir}")
+        print(f"[inspect_scene] No PNG writer available; saved raw+gray rgb tensors to: {output_dir}")
 
 
 def show_reset_preview(env):
@@ -143,11 +143,11 @@ def main():
 
     env = gym.make("LocalInsert-UR10e-Direct-v0", cfg=env_cfg, render_mode="human")
     reset_index = 0
-    depth_output_dir = resolve_depth_output_dir() if args.save_reset_depth else None
+    rgb_output_dir = resolve_rgb_output_dir() if args.save_reset_rgb else None
     env.reset()
     show_reset_preview(env)
     lock_viewport_to_task_camera()
-    save_reset_depth(env, reset_index, depth_output_dir)
+    save_reset_rgb(env, reset_index, rgb_output_dir)
     print_scene_state(env)
 
     last_reset = time.time()
@@ -161,7 +161,7 @@ def main():
                 env.reset()
                 show_reset_preview(env)
                 lock_viewport_to_task_camera()
-                save_reset_depth(env, reset_index, depth_output_dir)
+                save_reset_rgb(env, reset_index, rgb_output_dir)
                 print("\nReset scene")
                 print_scene_state(env)
                 last_reset = time.time()

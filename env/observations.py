@@ -42,12 +42,8 @@ def compute_intermediate_values(env, update_force: bool = True):
 
 def get_observations(env):
     compute_intermediate_values(env, update_force=False)
-    proprio = torch.cat([env.joint_pos, env.joint_vel, env.ee_pos, env.ee_quat], dim=-1)
-    phase = env.phase_flag.unsqueeze(-1)
-    force_history_masked = env.force_history * phase.unsqueeze(-1)
-    force_flat = force_history_masked.reshape(env.num_envs, -1)
     obs = {
-        "policy": torch.cat([proprio, phase, force_flat], dim=-1),
+        "policy": torch.cat([env.ee_pos, env.ee_quat], dim=-1),
         "hole_state": env.hole_top_pos[:, :2],
     }
 

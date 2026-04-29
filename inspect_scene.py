@@ -74,7 +74,7 @@ def lock_viewport_to_task_camera():
     if viewport is None:
         print("[inspect_scene] Could not find active viewport window.")
         return
-    camera_path = "/World/envs/env_0/Camera"
+    camera_path = "/World/envs/env_0/Robot/wrist_3_link/Camera"
     viewport.set_active_camera(camera_path)
     print(f"[inspect_scene] Viewport locked to task camera: {camera_path}")
 

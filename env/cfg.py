@@ -15,7 +15,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 
 PEG_RADIUS = 0.015
-PEG_HEIGHT = 0.08
+PEG_HEIGHT = 0.10
 HOLE_CLEARANCE = 0.0025
 HOLE_DIAMETER = PEG_RADIUS * 2 + HOLE_CLEARANCE * 2
 HOLE_DEPTH = 0.05
@@ -44,8 +44,8 @@ class TaskCfg:
     hole: HoleCfg = HoleCfg()
     robot_init_joint_pos: list = [0.0, -1.55, 1.95, -1.97, -1.5708, 0.0]
     hole_workspace_xy_center: list = [0.66, 0.17]
-    hole_workspace_xy_half_range: list = [0.04, 0.04]
-    max_initial_xy_dist: float = 0.06
+    hole_workspace_xy_half_range: list = [0.015, 0.015]
+    max_initial_xy_dist: float = 0.03
     success_xy_tolerance: float = 0.005
     success_depth_fraction: float = 0.8
     too_far_xy_threshold: float = 0.16
@@ -55,16 +55,20 @@ class TaskCfg:
     phase_switch_xy_threshold: float = 0.02
     precontact_distance_progress_scale: float = 0.0
     precontact_xy_progress_scale: float = 200.0
-    precontact_z_progress_scale: float = 0.0
+    precontact_z_progress_scale: float = 30.0
     precontact_z_gate_sigma: float = 0.015
     precontact_xy_penalty_scale: float = 15.0
     precontact_misaligned_downward_xy_threshold: float = 0.015
     precontact_misaligned_downward_penalty_scale: float = 10.0
     precontact_misaligned_downward_progress_penalty_scale: float = 80.0
-    postcontact_xy_progress_scale: float = 0.0
+    precontact_fast_downward_progress_threshold: float = 0.002
+    precontact_fast_downward_progress_penalty_scale: float = 120.0
+    postcontact_xy_progress_scale: float = 80.0
     postcontact_distance_progress_scale: float = 0.0
-    postcontact_insertion_progress_scale: float = 0.0
-    postcontact_force_penalty_scale: float = 0.0
+    postcontact_insertion_progress_scale: float = 240.0
+    postcontact_force_penalty_scale: float = 0.05
+    postcontact_fast_insertion_progress_threshold: float = 0.001
+    postcontact_fast_insertion_progress_penalty_scale: float = 300.0
     action_penalty_scale: float = 0.001
     success_bonus: float = 50.0
     peg_mount_offset: list = [0.0, 0.0, -0.01]
@@ -73,8 +77,8 @@ class TaskCfg:
 @configclass
 class CtrlCfg:
     ema_factor: float = 0.05
-    precontact_pos_action_threshold: list = [0.0005, 0.0005, 0.0008]
-    postcontact_pos_action_threshold: list = [0.0008, 0.0008, 0.0015]
+    precontact_pos_action_threshold: list = [0.0005, 0.0005, 0.0006]
+    postcontact_pos_action_threshold: list = [0.0005, 0.0005, 0.0005]
     ik_damping: float = 0.05
     postcontact_rot_action_threshold: list = [0.03, 0.03, 0.03]
 
@@ -89,10 +93,10 @@ class ForceSensorCfg:
 @configclass
 class LocalInsertEnvCfg(DirectRLEnvCfg):
     decimation: int = 8
-    action_space: int = 6
-    observation_space: int = 44
+    action_space: int = 3
+    observation_space: int = 7
     state_space: int = 0
-    episode_length_s: float = 8.0
+    episode_length_s: float = 24.0
 
     task: TaskCfg = TaskCfg()
     ctrl: CtrlCfg = CtrlCfg()
@@ -120,7 +124,7 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
             activate_contact_sensors=True,
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.256),
+            pos=(0.0, 0.0, 0.286),
             joint_pos={
                 "shoulder_pan_joint": 0.0,
                 "shoulder_lift_joint": -1.1,
@@ -178,10 +182,10 @@ class LocalInsertEnvCfg(DirectRLEnvCfg):
     )
 
     camera: TiledCameraCfg = TiledCameraCfg(
-        prim_path="/World/envs/env_.*/Camera",
+        prim_path="/World/envs/env_.*/Robot/wrist_3_link/Camera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.05, -0.75, 0.85),
-            rot=(0.861234, -0.099822, 0.185958, 0.462311),
+            pos=(0.11, -0.09, -0.12),
+            rot=(0.5518, -0.0882, -0.8215, 0.1129),
             convention="world",
         ),
         spawn=sim_utils.PinholeCameraCfg(

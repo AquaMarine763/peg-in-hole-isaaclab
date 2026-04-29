@@ -103,7 +103,10 @@ class LocalInsertEnv(DirectRLEnv):
     def _create_camera_proxy(self):
         stage = omni.usd.get_context().get_stage()
         source_env = self.scene.env_prim_paths[0]
-        prim_path = f"{source_env}/CameraProxy"
+        if "wrist_3_link" in self.cfg.camera.prim_path:
+            prim_path = f"{source_env}/Robot/wrist_3_link/CameraProxy"
+        else:
+            prim_path = f"{source_env}/CameraProxy"
 
         root = UsdGeom.Xform.Define(stage, prim_path)
         root_xform = UsdGeom.Xformable(root.GetPrim())
@@ -162,7 +165,6 @@ class LocalInsertEnv(DirectRLEnv):
     def _apply_action(self):
         compute_intermediate_values(self)
 
-        # --- Position ---
         pre_scale = torch.tensor(self.cfg.ctrl.precontact_pos_action_threshold, device=self.device).unsqueeze(0)
         post_scale = torch.tensor(self.cfg.ctrl.postcontact_pos_action_threshold, device=self.device).unsqueeze(0)
         phase = self.phase_flag.unsqueeze(-1)
@@ -170,22 +172,9 @@ class LocalInsertEnv(DirectRLEnv):
         pos_actions = self.actions[:, 0:3] * pos_scale
         ctrl_target_ee_pos = self.ee_pos + pos_actions
 
-        # --- Orientation ---
-        # Pre-contact: rotation actions masked to 0, maintain nominal orientation
-        # Post-contact: apply policy rotation delta on top of nominal
-        rot_scale = torch.tensor(self.cfg.ctrl.postcontact_rot_action_threshold, device=self.device).unsqueeze(0)
-        rot_actions = self.actions[:, 3:6] * rot_scale * phase
-        angle = torch.norm(rot_actions, p=2, dim=-1)
-        axis = rot_actions / (angle.unsqueeze(-1) + 1e-8)
-        rot_delta_quat = torch_utils.quat_from_angle_axis(angle, axis)
-        rot_delta_quat = torch.where(
-            angle.unsqueeze(-1) > 1e-6,
-            rot_delta_quat,
-            self._identity_quat,
-        )
-        ctrl_target_ee_quat = torch_utils.quat_mul(rot_delta_quat, self.nominal_ee_quat)
+        # Keep nominal orientation fixed for this minimal hole-finding task.
+        ctrl_target_ee_quat = self.nominal_ee_quat
 
-        # --- 6-DOF Damped Least-Squares IK ---
         pos_error = ctrl_target_ee_pos - self.ee_pos
         quat_error = torch_utils.quat_mul(ctrl_target_ee_quat, torch_utils.quat_conjugate(self.ee_quat))
         quat_error = quat_error * torch.sign(quat_error[:, 0]).unsqueeze(-1)

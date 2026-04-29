@@ -17,9 +17,9 @@ def Xform "Peg" (
     )
     {
         double radius = 0.015
-        double height = 0.08
+        double height = 0.1
         token axis = "Z"
-        double3 xformOp:translate = (0, 0, -0.04)
+        double3 xformOp:translate = (0, 0, -0.05)
         uniform token[] xformOpOrder = ["xformOp:translate"]
         bool physics:collisionEnabled = true
         token physics:approximation = "convexHull"

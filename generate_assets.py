@@ -5,7 +5,7 @@ import os
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
 PEG_RADIUS = 0.015
-PEG_HEIGHT = 0.08
+PEG_HEIGHT = 0.10
 PEG_MASS = 0.1
 
 HOLE_CLEARANCE = 0.0025

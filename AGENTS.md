@@ -9,7 +9,7 @@
 - 机器人从固定的 tutorial-style ready pose 出发
 - peg 初始保持竖直
 - hole 在一个受限工作区内独立随机
-- RL 需要先利用固定外部深度相机完成局部找孔 / 接近，再完成对齐与插入
+- RL 需要先利用腕部 eye-in-hand 灰度 RGB 相机完成局部找孔 / 接近，再完成对齐与插入
 
 也就是说，它仍然不是大范围全局找孔，但已经从“强绑定初始化的局部 handoff”升级为“更依赖视觉的受限工作区搜索 + 插入”。
 
@@ -18,7 +18,7 @@
 - UR10e 机械臂
 - 固定在末端、与最后一节机械臂同轴并朝下伸出的圆柱 peg
 - 底面贴地、顶部带孔的大尺寸 block
-- 外部固定相机（当前观测使用灰度 RGB）
+- 腕部 eye-in-hand 相机（当前观测使用灰度 RGB）
 - wrist link 力/力矩观测
 
 ## 当前几何尺寸
@@ -27,7 +27,7 @@
 
 - 半径：`0.015 m`（15 mm）
 - 直径：`0.030 m`（30 mm）
-- 高度：`0.080 m`（80 mm）
+- 高度：`0.100 m`（100 mm）
 - 质量：`0.1 kg`
 - 资产原点：peg 顶面中心
 - 资产朝向：沿局部 `-Z` 方向向下伸出
@@ -49,20 +49,21 @@
 
 - peg 挂载偏移：`[0.0, 0.0, -0.01]`（相对 `wrist_3_link` 沿局部 Z 负方向下移 10 mm）
 - 固定关节安装旋转：绕 X 轴 `180°`
-- 当前 fixed ready pose 下，实测 peg tip 大致位于：`(0.659, 0.174, 0.640)`
+- 当前 robot root Z：`0.286 m`
+- 当前 fixed ready pose 下，估算 peg tip 大致位于：`(0.659, 0.174, 0.650)`
 - 当前 hole 顶面 Z：`0.140 m`
-- 因而当前 fixed ready pose 下的初始 peg-to-hole 顶面高度差大致为：`0.500 m`（500 mm），具体接触前 z gap 会随 rollout 变化
+- 因而当前 fixed ready pose 下的初始 peg-to-hole 顶面高度差大致为：`0.510 m`（510 mm），是上一版实测约 `0.230 m` 的两倍以上；具体接触前 z gap 会随 rollout 变化
 
 ### Camera / Workspace Related Geometry
 
-- 外部相机位置：`(0.05, -0.75, 0.85)`
-- 相机四元数：`(0.861234, -0.099822, 0.185958, 0.462311)`
+- 腕部相机相对 `wrist_3_link` 偏移：`(0.11, -0.09, -0.12)`
+- 腕部相机相对 `wrist_3_link` 四元数：`(0.5518, -0.0882, -0.8215, 0.1129)`
 - 图像分辨率：`160 × 160`
 - 当前 hole workspace 中心：`(0.66, 0.17)`
-- 当前 hole workspace 半宽：`(0.04, 0.04)`
+- 当前 hole workspace 半宽：`(0.015, 0.015)`
 - 当前 hole workspace 范围：
-  - `x ∈ [0.62, 0.70]`
-  - `y ∈ [0.13, 0.21]`
+  - `x ∈ [0.645, 0.675]`
+  - `y ∈ [0.155, 0.185]`
 
 ## 当前约束
 
@@ -70,16 +71,17 @@
 - 不做全局找孔
 - 不做传统粗定位模块
 - 训练默认 headless
-- peg 与 hole 初始位置不再强绑定，但 hole 仍限制在固定相机稳定可见、UR10e 可达的局部工作区内
+- 当前 episode 时长为 `24s`，用于配合约 `0.51m` 的高初始 z-gap，让策略有足够时间在下降过程中继续视觉对准
+- peg 与 hole 初始位置不再强绑定，但 hole 仍限制在局部工作区内；当前视觉改为腕部 eye-in-hand，相机直接随 `wrist_3_link` 运动
 - robot / peg 初始 ready pose 固定，peg 初始保持竖直，避免同时引入搜索和姿态随机化两种难度
-- 动作空间 6D：pre-contact 阶段只用 3D 平移（旋转 mask 为 0，IK 维持 nominal 朝向）；post-contact 阶段放开 3D 旋转自由度用于插入修正
+- 当前最小找孔版本动作空间已简化为 3D：只输出末端 XYZ 平移；姿态由控制链维持 nominal 朝向，不再让 actor 输出旋转
 - 当前加入局部任务保护：peg tip 与 hole 的 XY 距离超过 160mm 直接 reset，避免策略早期跑飞
-- 当前 reward 采用两阶段设计：pre-contact 视觉搜索主导；post-contact 接触修正 / 插入主导；两阶段共享成功奖励
+- 当前 reward 采用两阶段设计：pre-contact 视觉搜索 + gated 慢下压；post-contact 接触修正 / 插入主导；两阶段共享成功奖励
 - 插入奖励仍使用 soft alignment gate：`exp(-xy²/(2σ²))`, σ=5mm，让策略在非完美对齐时也能获得插入梯度信号
-- 相机当前采用更远的固定外部视角：沿 workspace center 的观察射线继续拉远，并显式 look-at hole 工作区中心上方一点；当前 actor 看到的是由外部 RGB 图像转换得到的灰度单通道图像，分辨率为 `160 × 160`
-- 当前采用显式两阶段单策略：Phase 0 为接触前视觉搜索 / 接近，Phase 1 为接触后插入；phase flag 会进入 observation，并在训练/demo 输出中显示
-- 当前 observation 采用 asymmetric actor-critic：actor 看 `policy + grayscale rgb`，critic 看 `policy + privileged hole_xy`；其中 privileged `hole_xy` 只在训练时给 critic，用来改善 pre-contact 视觉搜索阶段的 value estimation
-- 当前控制链：末端局部位移+旋转 -> 6-DOF Damped Least-Squares IK -> 关节位置目标；pre-contact 自动维持 reset 时的 nominal 朝向
+- 相机当前采用腕部 eye-in-hand 视角：相机挂在 `wrist_3_link` 附近，尽量让图像直接反映 peg-hole 局部相对关系；当前 actor 看到的是由 RGB 图像转换得到的灰度单通道图像，分辨率为 `160 × 160`
+- 当前采用显式两阶段单策略：Phase 0 为接触前视觉搜索 / 接近，Phase 1 为接触后插入；phase flag 当前用于环境内部动作尺度、reward 与日志，不直接进入 actor observation
+- 当前 observation 采用更极简的 asymmetric actor-critic：actor 看 `ee_pos + ee_quat + grayscale rgb`，critic 看 `ee_pos + ee_quat + privileged hole_xy`；其中 privileged `hole_xy` 只在训练时给 critic，用来改善 pre-contact 视觉搜索阶段的 value estimation
+- 当前控制链：末端局部位移 -> 保持 nominal 朝向的 6-DOF Damped Least-Squares IK -> 关节位置目标
 - Reset 时会先刷新 robot articulation 内部状态，再读取 EE 姿态与 nominal 朝向，避免沿用上个 episode 的倾斜姿态；当前验证 peg 初始轴线与 hole 一样沿世界 Z 轴
 - Force penalty scale 当前为 0.05，用于抑制暴力接触
 
@@ -90,6 +92,7 @@
 ### Robot / Peg 初始条件
 
 - robot 初始关节角固定：`[0.0, -1.55, 1.95, -1.97, -1.5708, 0.0]`
+- robot root 初始高度固定：`z = 0.286 m`
 - peg 通过 fixed joint 固定在 `wrist_3_link`
 - peg 初始保持竖直，沿世界 Z 轴朝下
 - peg 初始位置由 robot ready pose 决定，而不是由 hole 反推
@@ -97,17 +100,17 @@
 ### Hole workspace
 
 - 工作区中心：`(0.66, 0.17)`
-- 工作区半宽：`(0.04, 0.04)`
+- 工作区半宽：`(0.015, 0.015)`
 - 即第一版 hole 采样矩形大致为：
-  - `x ∈ [0.62, 0.70]`
-  - `y ∈ [0.13, 0.21]`
+  - `x ∈ [0.645, 0.675]`
+  - `y ∈ [0.155, 0.185]`
 - hole 顶面 Z 固定在 `HOLE_BLOCK_HEIGHT = 0.14`
 - hole 姿态固定，不做旋转随机化
 
 ### 初始距离约束
 
 - 为避免任务瞬间退化成全局找孔，当前仍要求 hole 采样后满足：
-  - `initial_xy_dist <= 0.06 m`
+  - `initial_xy_dist <= 0.03 m`
 - 如果采样结果超出这个上限，则在 workspace 内重新采样 hole
 
 这个约束的意义是：
@@ -117,7 +120,7 @@
 
 ## 当前 reward 设计
 
-reward 当前已临时精简为一个“视觉找孔版”最小方案，核心只强调 pre-contact 横向找孔，而不是把接触后插入作为当前训练目标。
+reward 当前从“只验证视觉找孔”的临时版本恢复为“视觉找孔 + 慢下压 + 插入”的最小完整方案。核心是：接触前先用视觉完成 XY 对准，只在对准较好时奖励向下接近；接触后重新奖励 XY 修正与插入进步，并用力惩罚抑制暴力接触。
 
 ### Phase 0: pre-contact（视觉搜索 / 接近）
 
@@ -138,8 +141,8 @@ reward 当前已临时精简为一个“视觉找孔版”最小方案，核心�
    - 目的是彻底消除"不靠视觉也能靠下压拿 reward"的局部最优
 
 3. `precontact_z_progress_reward`
-   - 当前已降为 `0`
-   - 也就是当前最小版本不再奖励 pre-contact 阶段的向下接近
+   - 当前恢复为小幅正奖励，权重 `30.0`
+   - 该奖励乘以 `pre_align_gate`，因此只有 XY 对准较好时，慢慢向下接近才稳定获得正反馈
 
 4. `pre_align_gate`
    - 形式：`exp(-xy² / (2σ²))`
@@ -157,18 +160,24 @@ reward 当前已临时精简为一个“视觉找孔版”最小方案，核心�
    - 当 `xy_dist > 15mm` 且 peg 真实发生 downward progress 时触发
    - 这使得“XY 还没找准就继续往下压”在 reward 上直接变成净负收益，而不是只是弱惩罚
 
-8. `pre-contact action scaling`
-   - 当前 pre-contact 动作阈值为 `XY=0.5mm, Z=0.8mm`
-   - 仍允许向下接近，但不再像之前那样明显偏向“瞬间下冲”
+8. `fast_downward_penalty`
+   - 当 pre-contact 单步真实下压进度超过 `2mm` 时，只对超出部分惩罚
+   - 作用是允许必要的下降，但让“最大速度下冲”在 reward 上不再比慢速下降更划算
 
-### Phase 1: post-contact（当前最小版本基本关闭）
+9. `pre-contact action scaling`
+   - 当前 pre-contact 动作阈值为 `XY=0.5mm, Z=0.6mm`
+   - 允许对准后缓慢下压，但降低单步 Z 位移，避免策略用快速下冲绕过视觉对准
 
-当前为了先验证视觉找孔，post-contact 相关 reward 基本都置为 `0`：
+### Phase 1: post-contact（接触修正 / 插入）
 
-- `postcontact_xy_progress_reward = 0`
+当前 post-contact reward 已重新打开，用来让策略在接触后继续对准并逐步插入，而不是只在孔口附近结束：
+
+- `postcontact_xy_progress_reward = 80`
 - `postcontact_distance_progress_reward = 0`
-- `postcontact_insertion_progress_reward = 0`
-- `postcontact_force_penalty = 0`
+- `postcontact_insertion_progress_reward = 240`
+- `postcontact_force_penalty = 0.05`
+- `fast_insertion_penalty`：post-contact 单步插入进度超过 `1mm` 时惩罚超出部分，抑制接触后快速硬压
+- post-contact 动作阈值为 `XY=0.5mm, Z=0.5mm`，让接触后插入更像慢速 servo，而不是快速下压
 
 ### 当前阶段化保护
 
@@ -184,11 +193,12 @@ reward 当前已临时精简为一个“视觉找孔版”最小方案，核心�
 
 ### 当前 success 定义
 
-当前视觉找孔最小版本的 success 只看：
+当前 success 同时要求：
 
 - `xy_dist < 5mm`
+- `insertion_depth >= 80% * hole_depth`
 
-不再要求插入深度条件。
+这样可以避免策略只把 peg tip 移到孔口 XY 附近就提前结束，迫使它学习“对准后慢慢下压并插入”。
 
 ## 当前工作流程
 

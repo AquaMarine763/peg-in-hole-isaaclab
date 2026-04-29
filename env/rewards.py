@@ -43,6 +43,24 @@ def get_rewards(env):
         * env.cfg_task.precontact_misaligned_downward_progress_penalty_scale
         * pre_mask
     )
+    fast_downward_excess = torch.clamp(
+        downward_progress - env.cfg_task.precontact_fast_downward_progress_threshold,
+        min=0.0,
+    )
+    fast_downward_penalty = (
+        fast_downward_excess
+        * env.cfg_task.precontact_fast_downward_progress_penalty_scale
+        * pre_mask
+    )
+    fast_insertion_excess = torch.clamp(
+        insertion_progress - env.cfg_task.postcontact_fast_insertion_progress_threshold,
+        min=0.0,
+    )
+    fast_insertion_penalty = (
+        fast_insertion_excess
+        * env.cfg_task.postcontact_fast_insertion_progress_penalty_scale
+        * post_mask
+    )
 
     rewards = (
         precontact_dist_reward
@@ -56,6 +74,8 @@ def get_rewards(env):
         - xy_penalty
         - misaligned_downward_penalty
         - misaligned_downward_progress_penalty
+        - fast_downward_penalty
+        - fast_insertion_penalty
         + curr_successes.float() * env.cfg_task.success_bonus
     )
 
@@ -77,6 +97,8 @@ def get_rewards(env):
         "xy_penalty": xy_penalty.mean(),
         "misaligned_downward_penalty": misaligned_downward_penalty.mean(),
         "misaligned_downward_progress_penalty": misaligned_downward_progress_penalty.mean(),
+        "fast_downward_penalty": fast_downward_penalty.mean(),
+        "fast_insertion_penalty": fast_insertion_penalty.mean(),
         "contact_force_mean": contact_force.mean(),
         "xy_dist_mean": peg_to_hole_xy.mean(),
         "z_gap_mean": z_gap.mean(),

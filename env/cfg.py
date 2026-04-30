@@ -55,13 +55,13 @@ class TaskCfg:
     phase_switch_xy_threshold: float = 0.02
     precontact_distance_progress_scale: float = 0.0
     precontact_xy_progress_scale: float = 200.0
-    precontact_z_progress_scale: float = 30.0
+    precontact_z_progress_scale: float = 15.0
     precontact_z_gate_sigma: float = 0.015
     precontact_xy_penalty_scale: float = 15.0
     precontact_misaligned_downward_xy_threshold: float = 0.015
     precontact_misaligned_downward_penalty_scale: float = 10.0
     precontact_misaligned_downward_progress_penalty_scale: float = 80.0
-    precontact_fast_downward_progress_threshold: float = 0.002
+    precontact_fast_downward_progress_threshold: float = 0.0008
     precontact_fast_downward_progress_penalty_scale: float = 120.0
     postcontact_xy_progress_scale: float = 80.0
     postcontact_distance_progress_scale: float = 0.0
@@ -77,7 +77,7 @@ class TaskCfg:
 @configclass
 class CtrlCfg:
     ema_factor: float = 0.05
-    precontact_pos_action_threshold: list = [0.0005, 0.0005, 0.0006]
+    precontact_pos_action_threshold: list = [0.00025, 0.00025, 0.00035]
     postcontact_pos_action_threshold: list = [0.0005, 0.0005, 0.0005]
     ik_damping: float = 0.05
     postcontact_rot_action_threshold: list = [0.03, 0.03, 0.03]

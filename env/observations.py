@@ -43,6 +43,7 @@ def compute_intermediate_values(env, update_force: bool = True):
 def get_observations(env):
     compute_intermediate_values(env, update_force=False)
     obs = {
+        "ee_z": env.ee_pos[:, 2:3],
         "policy": torch.cat([env.ee_pos, env.ee_quat], dim=-1),
         "hole_state": env.hole_top_pos[:, :2],
     }

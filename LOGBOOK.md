@@ -90,3 +90,10 @@
 - 为解决“下压过快、只对准 XY 就 success”的训练捷径，重新打开 gated pre-contact Z progress、post-contact XY / insertion reward 与 force penalty；success 现在要求 `xy < 5mm` 且插入深度达到孔深 80%，同时把 pre/post contact Z 动作阈值收紧到 0.6mm / 0.5mm，让策略必须学习对准后慢慢下压。
 - 按“高初始高度、下降中继续对准”的方向把 robot root Z 从 `0.006m` 提高到 `0.286m`，使 reset 初始 z-gap 从实测约 `0.230m` 提升到预期约 `0.510m`（两倍以上）；同时将 episode 时长从 `8s` 扩展到 `24s`，给策略留出更长的视觉搜索与慢下压轨迹。
 - 新增显式快速下压惩罚：pre-contact 真实单步下压进度超过 `2mm` 时惩罚超出部分，post-contact 单步插入进度超过 `1mm` 时更强惩罚超出部分；这样保留下降/插入梯度，但让“最大速度下冲”不再是最优策略。
+- 将 actor observation 改成更视觉主导的 Version B：actor 只接收 `ee_z + grayscale rgb`，不再接收 `ee_x / ee_y / ee_quat`；critic 仍保留 `ee_pos + ee_quat + privileged hole_xy`，用于稳定 value estimation。
+- 强化训练中断保存链路：不再只被动依赖 `except KeyboardInterrupt`，而是对 `SIGINT/SIGTERM/SIGBREAK` 先发起 graceful stop 请求，在当前 iteration 结束后统一保存 `model_{iteration}.pt` 与 `latest.pt`，提高 PowerShell / Windows 下 Ctrl+C 中断保存的稳定性。
+- 将 pre-contact 改成更保守的控制版本，缓解高起点下随机/早期策略迅速横向跑偏和下压刹不住的问题：XY 动作阈值 `0.5mm -> 0.25mm`、Z 动作阈值 `0.6mm -> 0.35mm`、快速下压阈值 `2.0mm -> 0.8mm`，并把 gated Z progress 权重 `30 -> 15`。
+### 2026-04-30
+
+- Reviewed the current clean Isaac Lab local insert code path and summarized the environment, observation, control, reward, reset, and PPO training flow; no behavior code changed.
+- 扩展训练诊断日志与绘图：训练中额外记录 raw actor action 与 executed action 的 Z/XY 偏置、下压均值和 Z 饱和比例；`plot_training_stats.py` 现在导出 pre-align gate、reward/penalty 组成、xy-vs-zgap 与 action 诊断曲线，方便训练后判断是否“没对准就持续下压”。

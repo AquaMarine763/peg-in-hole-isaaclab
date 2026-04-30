@@ -80,7 +80,7 @@
 - 插入奖励仍使用 soft alignment gate：`exp(-xy²/(2σ²))`, σ=5mm，让策略在非完美对齐时也能获得插入梯度信号
 - 相机当前采用腕部 eye-in-hand 视角：相机挂在 `wrist_3_link` 附近，尽量让图像直接反映 peg-hole 局部相对关系；当前 actor 看到的是由 RGB 图像转换得到的灰度单通道图像，分辨率为 `160 × 160`
 - 当前采用显式两阶段单策略：Phase 0 为接触前视觉搜索 / 接近，Phase 1 为接触后插入；phase flag 当前用于环境内部动作尺度、reward 与日志，不直接进入 actor observation
-- 当前 observation 采用更极简的 asymmetric actor-critic：actor 看 `ee_pos + ee_quat + grayscale rgb`，critic 看 `ee_pos + ee_quat + privileged hole_xy`；其中 privileged `hole_xy` 只在训练时给 critic，用来改善 pre-contact 视觉搜索阶段的 value estimation
+- 当前 observation 采用更偏视觉主导的 asymmetric actor-critic：actor 只看 `ee_z + grayscale rgb`，critic 看 `ee_pos + ee_quat + privileged hole_xy`；其中 privileged `hole_xy` 只在训练时给 critic，用来改善 pre-contact 视觉搜索阶段的 value estimation，同时避免 actor 依赖 `ee_x / ee_y` 绝对位置走统计捷径
 - 当前控制链：末端局部位移 -> 保持 nominal 朝向的 6-DOF Damped Least-Squares IK -> 关节位置目标
 - Reset 时会先刷新 robot articulation 内部状态，再读取 EE 姿态与 nominal 朝向，避免沿用上个 episode 的倾斜姿态；当前验证 peg 初始轴线与 hole 一样沿世界 Z 轴
 - Force penalty scale 当前为 0.05，用于抑制暴力接触
@@ -141,7 +141,7 @@ reward 当前从“只验证视觉找孔”的临时版本恢复为“视觉找�
    - 目的是彻底消除"不靠视觉也能靠下压拿 reward"的局部最优
 
 3. `precontact_z_progress_reward`
-   - 当前恢复为小幅正奖励，权重 `30.0`
+   - 当前为小幅正奖励，权重 `15.0`
    - 该奖励乘以 `pre_align_gate`，因此只有 XY 对准较好时，慢慢向下接近才稳定获得正反馈
 
 4. `pre_align_gate`
@@ -161,12 +161,12 @@ reward 当前从“只验证视觉找孔”的临时版本恢复为“视觉找�
    - 这使得“XY 还没找准就继续往下压”在 reward 上直接变成净负收益，而不是只是弱惩罚
 
 8. `fast_downward_penalty`
-   - 当 pre-contact 单步真实下压进度超过 `2mm` 时，只对超出部分惩罚
+   - 当 pre-contact 单步真实下压进度超过 `0.8mm` 时，只对超出部分惩罚
    - 作用是允许必要的下降，但让“最大速度下冲”在 reward 上不再比慢速下降更划算
 
 9. `pre-contact action scaling`
-   - 当前 pre-contact 动作阈值为 `XY=0.5mm, Z=0.6mm`
-   - 允许对准后缓慢下压，但降低单步 Z 位移，避免策略用快速下冲绕过视觉对准
+   - 当前 pre-contact 动作阈值为 `XY=0.25mm, Z=0.35mm`
+   - 在高初始 z-gap 下进一步降低单步横向和下压位移，避免未学会视觉前因为积分漂移或惯性耦合过快跑出工作区
 
 ### Phase 1: post-contact（接触修正 / 插入）
 
@@ -251,7 +251,7 @@ clean_isaaclab_local_insert/
 
 - `AGENTS.md`：长期知识库
 - `SYSTEM_OVERVIEW.md`：当前系统结构、模块协作、输入输出与训练时序总结
-- `plot_training_stats.py`：从指定 TensorBoard event 文件导出训练统计图（loss / reward / xy / zgap / force / done counts）
+- `plot_training_stats.py`：从指定 TensorBoard event 文件导出训练统计图（loss / reward / xy / zgap / force / done counts / pre-align gate / reward components / downward penalties / raw 与 executed action 诊断）
 - `COMMANDS.md`：常用指令
 - `LOGBOOK.md`：日期 + 一两句话工作记录
 - `notes/NOTES.md`：学习笔记

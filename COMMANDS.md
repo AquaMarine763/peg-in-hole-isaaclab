@@ -21,7 +21,7 @@ python generate_assets.py
 python train.py --num_envs 16 --max_iterations 500 --headless
 ```
 
-模型每 100 iterations 自动保存到 `logs/local_insert/`。支持 Ctrl+C 中断保存。
+模型每 100 iterations 自动保存到 `logs/local_insert/`。当前还会额外维护一个滚动的 `logs/local_insert/latest.pt`。支持 Ctrl+C 的 graceful stop 中断保存。
 
 ## 续训
 
@@ -32,7 +32,7 @@ python train.py --num_envs 16 --max_iterations 500 --headless --resume logs/loca
 **注意**：如果改过 reward 结构或观测空间，不要 resume 旧模型，从头训。
 
 每 100 个 iteration 自动保存一次，文件名就是 model_{iteration数}.pt。所以 --max_iterations 500 训练完会有：model_100.pt、model_200.pt、model_300.pt、model_400.pt、model_500.pt。
-Ctrl+C 中断时也会保存，比如你在第 237 步按了中断，就会生成 model_237.pt。
+第一次 Ctrl+C 会请求“当前 iteration 完成后再保存并退出”，这样比直接依赖 `KeyboardInterrupt` 更稳。中断保存时会同时生成 `model_{iteration数}.pt` 和覆盖更新 `latest.pt`。例如你在第 237 轮请求中断，正常会得到 `model_237.pt` 和 `latest.pt`。
 
 ## Demo
 
@@ -98,7 +98,7 @@ python train.py --num_envs 1 --max_iterations 1 --headless
 
 ## 训练统计图导出
 
-手动指定一个 TensorBoard event 文件，导出 8 张单图到 `debug_outputs/training_plots/<时间戳>/`：
+手动指定一个 TensorBoard event 文件，导出训练诊断图到 `debug_outputs/training_plots/<时间戳>/`。当前会包含 loss/reward、xy/zgap/force/done counts、pre-align gate、pre-contact reward、下压惩罚，以及 raw actor action / executed action 的 Z 与 XY 偏置曲线：
 
 ```bash
 python plot_training_stats.py --event_file logs/local_insert/events.out.tfevents.xxxxx --smooth 5

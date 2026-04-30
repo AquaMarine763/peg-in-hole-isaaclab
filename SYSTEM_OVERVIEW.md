@@ -24,7 +24,7 @@
 - 机器人从固定 ready pose 出发
 - peg 初始保持竖直
 - hole 在受限 workspace 内随机
-- actor 依赖外部固定相机的视觉输入进行局部找孔 / 接近
+- actor 依赖腕部 eye-in-hand 灰度 RGB 相机进行局部找孔 / 接近
 - 接触后再做修正与插入
 
 也就是：
@@ -266,7 +266,7 @@ LocalInsertEnv(DirectRLEnv)
 2. 读取 EE pose
 3. 通过固定挂载关系计算 peg root / peg tip
 4. 在 workspace 中采样 hole XY
-5. 若 `initial_xy_dist > 0.06m` 则重采样
+5. 若 `initial_xy_dist > 0.03m` 则重采样
 6. hole Z 固定为 `0.14`
 7. 清空：
    - `force_history`
@@ -301,20 +301,23 @@ LocalInsertEnv(DirectRLEnv)
 
 ```python
 {
+    "ee_z": ...,
     "policy": ...,
     "hole_state": ...,
     "rgb": ...,
 }
 ```
 
+###### `ee_z`
+- `ee_pos[:, 2:3]`
+- 只给 actor 用，提供高度节奏信息
+- 不包含 `ee_x / ee_y`，避免 actor 依赖绝对 XY 位置走统计捷径
+
 ###### `policy`
 组成：
-- joint_pos
-- joint_vel
 - ee_pos
 - ee_quat
-- phase_flag
-- masked force_history
+- 只给 critic 用，提供完整末端位姿上下文
 
 ###### `hole_state`
 - `hole_top_pos[:, :2]`
@@ -327,7 +330,7 @@ LocalInsertEnv(DirectRLEnv)
 - 缓存到 `_cached_rgb`
 
 **当前 actor / critic 分工**：
-- actor：`policy + rgb`
+- actor：`ee_z + rgb`
 - critic：`policy + hole_state`
 
 ---
@@ -400,14 +403,15 @@ LocalInsertEnv(DirectRLEnv)
 
 ```python
 obs_groups = {
-    "actor": ["policy", "rgb"],
+    "actor": ["ee_z", "rgb"],
     "critic": ["policy", "hole_state"],
 }
 ```
 
 #### actor
 - CNN + MLP
-- 输入：`policy + rgb`
+- 输入：`ee_z + rgb`
+- 不直接接收 `ee_x / ee_y / ee_quat`，让 XY 对准更依赖视觉
 - 输出：动作分布
 
 #### critic

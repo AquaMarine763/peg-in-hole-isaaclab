@@ -31,9 +31,10 @@ def get_rewards(env):
     contact_force = env.contact_force_norm
     force_penalty = contact_force * env.cfg_task.postcontact_force_penalty_scale * post_mask
     action_penalty = torch.norm(env.actions, p=2, dim=-1) * env.cfg_task.action_penalty_scale
+    action_xy_norm = torch.norm(env.actions[:, 0:2], p=2, dim=-1)
+    downward_action = torch.clamp(-env.actions[:, 2], min=0.0)
     xy_penalty = peg_to_hole_xy * env.cfg_task.precontact_xy_penalty_scale * pre_mask
     postcontact_xy_reward = xy_progress * env.cfg_task.postcontact_xy_progress_scale * post_mask
-    downward_action = torch.clamp(-env.actions[:, 2], min=0.0)
     misaligned_gate = (peg_to_hole_xy > env.cfg_task.precontact_misaligned_downward_xy_threshold).float()
     misaligned_downward_penalty = downward_action * misaligned_gate * env.cfg_task.precontact_misaligned_downward_penalty_scale * pre_mask
     downward_progress = torch.clamp(z_progress, min=0.0)
@@ -99,6 +100,12 @@ def get_rewards(env):
         "misaligned_downward_progress_penalty": misaligned_downward_progress_penalty.mean(),
         "fast_downward_penalty": fast_downward_penalty.mean(),
         "fast_insertion_penalty": fast_insertion_penalty.mean(),
+        "action_x_mean": env.actions[:, 0].mean(),
+        "action_y_mean": env.actions[:, 1].mean(),
+        "action_z_mean": env.actions[:, 2].mean(),
+        "action_xy_norm_mean": action_xy_norm.mean(),
+        "action_downward_mean": downward_action.mean(),
+        "action_z_near_neg1_ratio": (env.actions[:, 2] < -0.95).float().mean(),
         "contact_force_mean": contact_force.mean(),
         "xy_dist_mean": peg_to_hole_xy.mean(),
         "z_gap_mean": z_gap.mean(),

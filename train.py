@@ -2,6 +2,7 @@ import argparse
 from collections import defaultdict
 import importlib.metadata as metadata
 import os
+import signal
 import sys
 import time
 
@@ -32,6 +33,49 @@ from env.core import LocalInsertEnv
 import __init__ as _env_register
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "local_insert")
+LATEST_MODEL_PATH = os.path.join(LOG_DIR, "latest.pt")
+
+
+def install_stop_signal_handlers():
+    stop_request = {"requested": False, "signal_name": None}
+    previous_handlers = {}
+
+    def _request_stop(signum, _frame):
+        signal_name = getattr(signal.Signals(signum), "name", str(signum))
+        if not stop_request["requested"]:
+            stop_request["requested"] = True
+            stop_request["signal_name"] = signal_name
+            print(
+                f"\nReceived {signal_name}. Will stop after the current iteration and save a checkpoint.",
+                flush=True,
+            )
+            return
+        raise KeyboardInterrupt
+
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, signal_name, None)
+        if sig is None:
+            continue
+        previous_handlers[sig] = signal.getsignal(sig)
+        signal.signal(sig, _request_stop)
+
+    return stop_request, previous_handlers
+
+
+def restore_signal_handlers(previous_handlers):
+    for sig, handler in previous_handlers.items():
+        signal.signal(sig, handler)
+
+
+def save_checkpoint(runner, iteration: int | None):
+    saved_paths = []
+    if iteration is not None and iteration > 0:
+        iter_path = os.path.join(LOG_DIR, f"model_{iteration}.pt")
+        runner.save(iter_path)
+        saved_paths.append(iter_path)
+    runner.save(LATEST_MODEL_PATH)
+    saved_paths.append(LATEST_MODEL_PATH)
+    return saved_paths
 
 
 def main():
@@ -59,6 +103,9 @@ def main():
     start = time.time()
     start_it = 0
     interrupted = False
+    completed = 0
+    last_completed_iteration = 0
+    stop_request, previous_signal_handlers = install_stop_signal_handlers()
 
     try:
         for it in range(agent_cfg.max_iterations):
@@ -67,6 +114,14 @@ def main():
             with torch.inference_mode():
                 for _ in range(agent_cfg.num_steps_per_env):
                     actions = runner.alg.act(obs)
+                    action_xy = actions[:, 0:2]
+                    action_z = actions[:, 2]
+                    metric_sums["raw_action_x_mean"] += float(actions[:, 0].mean().item())
+                    metric_sums["raw_action_y_mean"] += float(actions[:, 1].mean().item())
+                    metric_sums["raw_action_z_mean"] += float(action_z.mean().item())
+                    metric_sums["raw_action_xy_norm_mean"] += float(torch.norm(action_xy, p=2, dim=-1).mean().item())
+                    metric_sums["raw_action_downward_mean"] += float(torch.clamp(-action_z, min=0.0).mean().item())
+                    metric_sums["raw_action_z_near_neg1_ratio"] += float((action_z < -0.95).float().mean().item())
                     obs, rewards, dones, extras = env.step(actions.to(env.device))
                     obs = obs.to("cuda:0")
                     rewards = rewards.to("cuda:0")
@@ -98,10 +153,20 @@ def main():
                 rnd_weight=getattr(getattr(runner.alg, "rnd", None), "weight", None),
             )
             if getattr(runner.logger, "writer", None) is not None:
+                steps = max(agent_cfg.num_steps_per_env, 1)
+                for key in (
+                    "raw_action_x_mean",
+                    "raw_action_y_mean",
+                    "raw_action_z_mean",
+                    "raw_action_xy_norm_mean",
+                    "raw_action_downward_mean",
+                    "raw_action_z_near_neg1_ratio",
+                ):
+                    runner.logger.writer.add_scalar(f"Episode/{key}", metric_sums.get(key, 0.0) / steps, it)
                 runner.logger.writer.flush()
 
             if (it + 1) % agent_cfg.save_interval == 0 or (it + 1) == agent_cfg.max_iterations:
-                runner.save(os.path.join(LOG_DIR, f"model_{it + 1}.pt"))
+                save_checkpoint(runner, it + 1)
 
             elapsed = time.time() - start
             eta = elapsed / (it + 1) * (agent_cfg.max_iterations - it - 1)
@@ -127,15 +192,29 @@ def main():
             )
             if (it + 1) % 10 == 0:
                 print()
+
+            last_completed_iteration = it + 1
+            if stop_request["requested"]:
+                interrupted = True
+                completed = last_completed_iteration
+                print(
+                    f"\nGraceful stop requested via {stop_request['signal_name']} at iteration {completed}",
+                    flush=True,
+                )
+                break
     except KeyboardInterrupt:
         interrupted = True
-        completed = it + 1
-        print(f"\nTraining interrupted at iteration {completed}")
+        completed = last_completed_iteration
+        if completed > 0:
+            print(f"\nTraining interrupted after completing iteration {completed}")
+        else:
+            print("\nTraining interrupted before the first iteration completed")
+    finally:
+        restore_signal_handlers(previous_signal_handlers)
 
     if interrupted:
-        save_path = os.path.join(LOG_DIR, f"model_{completed}.pt")
-        runner.save(save_path)
-        print(f"Saved: {save_path}")
+        for save_path in save_checkpoint(runner, completed):
+            print(f"Saved: {save_path}")
     else:
         total = time.time() - start
         print(f"\nTraining complete: {agent_cfg.max_iterations} iterations in {total / 60:.1f} minutes")
